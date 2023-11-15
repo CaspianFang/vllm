@@ -275,6 +275,14 @@ class AsyncLLMEngine:
         self._background_loop_unshielded = None
         self.start_engine_loop = start_engine_loop
         self._request_tracker = RequestTracker()
+        
+        # =====================
+        #     MODIFY HERE
+        # =====================
+        print("=======================================")
+        print("AsyncLLMEngine __init__ dyz script test")
+        print("=======================================")
+        print("=======================================")
 
     @property
     def is_running(self) -> bool:
