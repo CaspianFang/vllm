@@ -1,7 +1,7 @@
 import argparse
 import dataclasses
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
 
 from vllm.config import (CacheConfig, ModelConfig, ParallelConfig,
                          SchedulerConfig)
@@ -32,6 +32,11 @@ class EngineArgs:
     revision: Optional[str] = None
     tokenizer_revision: Optional[str] = None
     quantization: Optional[str] = None
+    
+    # MODIFY
+    lora_paths: Optional[List[str]] = None
+    adapter_names: Optional[List[str]] = None
+    # END
 
     def __post_init__(self):
         if self.tokenizer is None:
@@ -171,6 +176,28 @@ class EngineArgs:
                             choices=['awq', 'squeezellm', None],
                             default=None,
                             help='Method used to quantize the weights')
+        
+        # MODIFY
+        parser.add_argument(
+            '--lora-paths',
+            metavar='path',
+            type=str,
+            default=None,
+            nargs='+',
+            help='the paths of lora model you want to load:' +
+            '[lora_path1 lora_path2 ...]')
+
+        parser.add_argument(
+            '--adapter-names',
+            metavar='adapter_name',
+            type=str,
+            default=None,
+            nargs='+',
+            help='the adapter names of lora model you want to load, each name'
+            + ' should be unique and needs to correspond to the path ' +
+            'one-to-one: [name1 name2 ...]')
+        # END
+        
         return parser
 
     @classmethod

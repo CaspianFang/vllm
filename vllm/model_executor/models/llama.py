@@ -39,7 +39,11 @@ from vllm.model_executor.layers.sampler import Sampler
 from vllm.model_executor.layers.quantized_linear import ParallelLinear
 from vllm.model_executor.parallel_utils.parallel_state import (
     get_tensor_model_parallel_rank, get_tensor_model_parallel_world_size)
-from vllm.model_executor.parallel_utils.layers import VocabParallelEmbedding
+from vllm.model_executor.parallel_utils.layers import (VocabParallelEmbedding,
+                                                       BLoraColumnParallelLinear, 
+                                                       BLoraRowParallelLinear,
+                                                       ColumnParallelLinear, 
+                                                       RowParallelLinear)  # MODIFY
 from vllm.model_executor.quantization_utils import QuantizationConfig
 from vllm.model_executor.weight_utils import (
     convert_pyslice_to_tensor, hf_model_weights_iterator,
@@ -270,6 +274,28 @@ class LlamaModel(nn.Module):
         hidden_states = self.norm(hidden_states)
         return hidden_states
 
+# MODIFY
+class NormHead(ColumnParallelLinear):
+
+    def __init__(self, hidden_size, vocab_size, bias=False):
+        super().__init__(hidden_size,
+                         vocab_size,
+                         bias=False,
+                         gather_output=False)
+        self.first_flag = True
+
+    def get_weight(self):
+        if self.first_flag:
+            self.first_flag = False
+            self.weight = nn.Parameter(nn.functional.normalize(self.weight))
+        return self.weight
+
+    def forward(self, hidden_states):
+        if self.first_flag:
+            self.first_flag = False
+            self.weight = nn.Parameter(nn.functional.normalize(self.weight))
+        return ColumnParallelLinear.forward(self, hidden_states)
+
 
 class LlamaForCausalLM(nn.Module):
 
@@ -299,6 +325,37 @@ class LlamaForCausalLM(nn.Module):
         input_metadata: InputMetadata,
         cache_events: Optional[List[torch.cuda.Event]],
     ) -> SamplerOutput:
+        
+        # MODIFY
+        # create and set lora mask
+        batch_lora_ids = {}
+        total_length = input_ids.shape[0]
+        index = 0
+        for seq_groups in input_metadata.seq_groups:
+            seq_ids = seq_groups[0]
+            sampling_params = seq_groups[1]
+            for i in range(len(seq_ids)):
+                lora_id = sampling_params.lora_id
+                index_set = batch_lora_ids.get(lora_id, set())
+                index_set.add(index)
+                batch_lora_ids[lora_id] = index_set
+                index += 1
+        # lora mask for compute lora in a batch: lora_id -> mask
+        lora_masks = {}
+        for lora_id, pos in batch_lora_ids.items():
+            mask = torch.zeros(total_length, device=input_ids.device)
+            for i in range(total_length):
+                if i in pos:
+                    mask[i] = 1
+            lora_masks[lora_id] = mask
+
+        for _, module in self.model.named_modules():
+            if isinstance(module,
+                          (BLoraColumnParallelLinear, BLoraRowParallelLinear)):
+                module.lora_masks = lora_masks
+        # END
+        
+        
         hidden_states = self.model(input_ids, positions, kv_caches,
                                    input_metadata, cache_events)
         next_tokens = self.sampler(self.lm_head.weight, hidden_states,
@@ -426,3 +483,37 @@ class LlamaForCausalLM(nn.Module):
             load_tensor_parallel_weights(param, loaded_weight, name,
                                          column_parallel_weights,
                                          row_parallel_weights, tp_rank)
+            
+    # MODIFY
+    def load_lora_weights_parallel(self, lora_state_dict: dict):
+        model_state_dict = self.state_dict()
+        
+        # for name in model_state_dict.keys():
+        #     print(name)
+        
+        tp_rank = get_tensor_model_parallel_rank()
+        for name, loaded_weight in lora_state_dict.items():
+            if name not in model_state_dict.keys():
+                raise ValueError(f"No module named {name} " +
+                                 f"in base model: {model_state_dict.keys()}")
+            param = model_state_dict[name]
+            column_parallel_weights = []
+            row_parallel_weights = []
+            if "W_pack" in name:
+                if "lora_B" in name:
+                    column_parallel_weights.append("lora_B")
+
+            elif "o_proj" in name:
+                if "lora_A" in name:
+                    row_parallel_weights.append("lora_A")
+            else:
+                raise ValueError("Only support target module for W_pack" +
+                                 f"and o_proj now! Target module:{name}")
+            load_tensor_parallel_weights(
+                param,
+                loaded_weight,
+                name,
+                column_parallel_weights,
+                row_parallel_weights,
+                tp_rank,
+            )

@@ -1,6 +1,6 @@
 """Utilities for selecting and loading models."""
 import contextlib
-from typing import Type
+from typing import Type, List, Tuple
 
 import torch
 import torch.nn as nn
@@ -10,6 +10,8 @@ from vllm.config import ModelConfig
 from vllm.model_executor.models import *  # pylint: disable=wildcard-import
 from vllm.model_executor.weight_utils import (get_quant_config,
                                               initialize_dummy_weights)
+
+from vllm.model_executor.lora_utils import add_lora_adapter # MODIFY
 
 # TODO(woosuk): Lazy-load the model classes.
 _MODEL_REGISTRY = {
@@ -64,7 +66,8 @@ def _get_model_architecture(config: PretrainedConfig) -> Type[nn.Module]:
         f"Supported architectures: {list(_MODEL_REGISTRY.keys())}")
 
 
-def get_model(model_config: ModelConfig) -> nn.Module:
+def get_model(model_config: ModelConfig,
+              lora_configs: List[Tuple[str, str]] = None) -> nn.Module:     # MODIFY
     model_class = _get_model_architecture(model_config.hf_config)
 
     # Get the quantization config.
@@ -108,4 +111,19 @@ def get_model(model_config: ModelConfig) -> nn.Module:
             model.load_weights(model_config.model, model_config.download_dir,
                                model_config.load_format, model_config.revision)
             model = model.cuda()
+            
+    # print("====== MODEL ======")
+    # for name in model.state_dict().keys():
+    #     print(name)
+            
+    # MODIFY
+    # load lora adapter
+    if lora_configs is not None:
+        for lora_config in lora_configs:
+            lora_path = lora_config[0]
+            adapter_name = lora_config[1]
+            add_lora_adapter(model=model,
+                             lora_path=lora_path,
+                             adapter_name=adapter_name)
+    # END
     return model.eval()
