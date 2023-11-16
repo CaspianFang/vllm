@@ -3,7 +3,7 @@ import time
 if __name__ == "__main__":
     prompt = "Hello and welcome, "
     prompts = [prompt]
-    path = "/vllm_workspace/weights/backbone/llama_7b_hf"
+    path = "/vllm_workspace/weights/backbone/baichuan_7b"
     lora_path = "/vllm_workspace/weights/loras/alpaca-lora-7b"
     lora_path_2 = "/vllm_workspace/weights/loras/bactrian-x-llama-7b-lora"
     
@@ -24,7 +24,6 @@ if __name__ == "__main__":
     llm._add_request(prompt=prompt,
                      prompt_token_ids=None,
                      sampling_params=sampling_params)
-    
     sampling_params = SamplingParams(temperature=0,
                                      top_p=1,
                                      best_of=2,

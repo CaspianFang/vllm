@@ -5,7 +5,7 @@
 
 # Parts of the code here are adapted from PyTorch
 # repo: https://github.com/pytorch/pytorch
-from typing import Optional
+from typing import Optional, Dict
 
 import torch
 import torch.nn.functional as F
@@ -308,7 +308,7 @@ class RowParallelLinear(torch.nn.Module):
 
 # MODIFY
 def compulate_lora(obj: LoraLayer, x: torch.Tensor, output: torch.Tensor,
-                   lora_masks: dict[str, torch.Tensor]) -> torch.Tensor:
+                   lora_masks: Dict[str, torch.Tensor]) -> torch.Tensor:
     lora_out = torch.zeros_like(output)
     for lora_id, lora_mask in lora_masks.items():
         # compute lora separately and use mask to filter

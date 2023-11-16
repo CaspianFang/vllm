@@ -499,7 +499,7 @@ class LlamaForCausalLM(nn.Module):
             param = model_state_dict[name]
             column_parallel_weights = []
             row_parallel_weights = []
-            if "W_pack" in name:
+            if "qkv_proj" in name:
                 if "lora_B" in name:
                     column_parallel_weights.append("lora_B")
 

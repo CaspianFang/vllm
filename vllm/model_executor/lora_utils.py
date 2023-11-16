@@ -52,6 +52,7 @@ def _create_new_module(lora_config, adapter_name, target):
 def _replace_module(parent, child_name, new_module, child):
     setattr(parent, child_name, new_module)
     new_module.weight = child.weight
+    
     if getattr(child, "state", None) is not None:
         new_module.state = child.state
         new_module.to(child.weight.device)
@@ -65,8 +66,9 @@ def _create_and_replace(lora_config, adapter_name, target, target_name,
                         parent):
     if (isinstance(target, (ColumnParallelLinear, RowParallelLinear))
             and not isinstance(target, LoraLayer)):
-        new_module = _create_new_module(lora_config, adapter_name, target)
+        new_module = _create_new_module(lora_config, adapter_name, target)  # get a BLORA module
         _replace_module(parent, target_name, new_module, target)
+        
     elif isinstance(target, LoraLayer):
         target.update_layer(adapter_name, lora_config.r,
                             lora_config.lora_alpha, lora_config.lora_dropout,
@@ -81,9 +83,14 @@ def add_lora_adapter(model: torch.nn.Module,
                                              use_auth_token=None)
     key_list = [key for key, _ in model.named_modules()]
     
+    model_state_dict_be = model.state_dict()
+    
     # iterate the modules of LLaMa to insert the LoRA adapter
     
     # TODO: we should re-construct the logic from here to fit LlaMa LoRA
+    
+    # for item in lora_config.target_modules:
+    #     print(item)
     
     for key in key_list:
         # find target module
@@ -94,13 +101,15 @@ def add_lora_adapter(model: torch.nn.Module,
         if not target_module_found:
             continue
         parent, target, target_name = _get_submodules(model, key)
-        print(f"parent: {parent}, ")
-
         # create and replace
         _create_and_replace(lora_config, adapter_name, target, target_name,
                             parent)
 
     adapters_weights = torch.load(f"{lora_path}/{WEIGHTS_NAME}")
+    # for item in adapters_weights.keys():
+    #     print(item)
+    
+
 
     processed_adapter_state_dict = {}
     for key, value in adapters_weights.items():
@@ -124,11 +133,16 @@ def add_lora_adapter(model: torch.nn.Module,
     # print("====== LORA ======")
     # for name in state_dict.keys():
     #     print(name)
-        
+    
+    # TODO: https://github.com/huggingface/peft/blob/70302d7b4fc667f6b2e80ac1b8cccde081270d1e/src/peft/peft_model.py#L555
+    # 怀疑是这一部分开始改变了模型的架构，因为load_state_dict的时候，只会加载权重，而不会改变模型的架构。
+    
     # print("====== MODEL ======")
     # for name in model.state_dict().keys():
     #     print(name)
 
+    model_state_dict_af = model.state_dict()
+    print(f"diff: {len(model_state_dict_af) - len(model_state_dict_be)}")
 
     model.load_lora_weights_parallel(state_dict)
     model.cuda()
