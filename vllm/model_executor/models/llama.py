@@ -41,6 +41,7 @@ from vllm.model_executor.parallel_utils.parallel_state import (
     get_tensor_model_parallel_rank, get_tensor_model_parallel_world_size)
 from vllm.model_executor.parallel_utils.layers import (VocabParallelEmbedding,
                                                        BLoraColumnParallelLinear, 
+                                                       BLoraQKVColumnParallelLinear,
                                                        BLoraRowParallelLinear,
                                                        ColumnParallelLinear, 
                                                        RowParallelLinear)  # MODIFY
@@ -350,8 +351,10 @@ class LlamaForCausalLM(nn.Module):
             lora_masks[lora_id] = mask
 
         for _, module in self.model.named_modules():
+            # if isinstance(module,
+            #               (BLoraColumnParallelLinear, BLoraRowParallelLinear)):
             if isinstance(module,
-                          (BLoraColumnParallelLinear, BLoraRowParallelLinear)):
+                          (BLoraQKVColumnParallelLinear, BLoraRowParallelLinear)):
                 module.lora_masks = lora_masks
         # END
         
@@ -507,7 +510,7 @@ class LlamaForCausalLM(nn.Module):
                 if "lora_A" in name:
                     row_parallel_weights.append("lora_A")
             else:
-                raise ValueError("Only support target module for W_pack" +
+                raise ValueError("Only support target module for qkv_proj" +
                                  f"and o_proj now! Target module:{name}")
             load_tensor_parallel_weights(
                 param,

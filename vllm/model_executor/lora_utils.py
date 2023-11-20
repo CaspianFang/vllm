@@ -1,4 +1,4 @@
-from vllm.model_executor.parallel_utils.layers import BLoraColumnParallelLinear, BLoraRowParallelLinear, ColumnParallelLinear, RowParallelLinear
+from vllm.model_executor.parallel_utils.layers import BLoraColumnParallelLinear, BLoraQKVColumnParallelLinear, BLoraRowParallelLinear, ColumnParallelLinear, RowParallelLinear, QKVLoraLayer
 from peft.tuners.lora import LoraLayer
 from peft import LoraConfig
 import re
@@ -21,7 +21,7 @@ def _create_new_module(lora_config, adapter_name, target):
     r = lora_config.r
     lora_dropout = lora_config.lora_dropout
     if isinstance(target, ColumnParallelLinear):
-        new_module = BLoraColumnParallelLinear(
+        new_module = BLoraQKVColumnParallelLinear(
             input_size=target.input_size,
             output_size=target.output_size_per_partition,
             adapter_name=adapter_name,
@@ -49,8 +49,44 @@ def _create_new_module(lora_config, adapter_name, target):
         return new_module
 
 
-def _replace_module(parent, child_name, new_module, child):
+def _replace_module(parent, 
+                    child_name,     # qkv_proj | o_proj
+                    new_module,     # BLoraColumnParallelLinear() | BLoraRowParallelLinear()
+                    child):         # ColumnParallelLinear() | RowParallelLinear()
     setattr(parent, child_name, new_module)
+    """ state_dict: 
+    new_module: BLoraColumnParallelLinear(): weight,    
+                                             lora_A.adapter_1.weight, 
+                                             lora_B.adapter_1.weight
+                                             
+    child:      ColumnParallelLinear():      weight,
+    """
+    # print("===============")
+    # for name, item in new_module.named_modules():
+    #     if isinstance(item, torch.nn.Module):
+    #         print("==")
+    #         for name_, mod in item.named_modules():
+    #             print(name_, ":", mod)
+    print("======")
+    if isinstance(new_module, BLoraQKVColumnParallelLinear):
+        # for item in new_module.state_dict().keys():
+        #     print(item)
+        # for name, module in new_module.named_children():
+        #     print(name)
+        #     if isinstance(module, QKVLoraLayer):
+        #         for item in module.state_dict().keys():
+        #             print(item)
+        for name, item in new_module.named_modules():
+            print(name, ":", item)
+        
+        
+        
+    # print("======")
+    # for name, item in child.named_modules():
+    #     print(name, ":", item)
+    # print("======")
+    # for item in child.state_dict().keys():
+    #     print(item)
     new_module.weight = child.weight
     
     if getattr(child, "state", None) is not None:
@@ -62,12 +98,17 @@ def _replace_module(parent, child_name, new_module, child):
                 module.to(child.weight.device)
 
 
-def _create_and_replace(lora_config, adapter_name, target, target_name,
-                        parent):
+def _create_and_replace(lora_config, adapter_name, 
+                        target,         # ColumnParallelLinear() | RowParallelLinear()
+                        target_name,    # qkv_proj | o_proj
+                        parent):        # LlamaAttention
     if (isinstance(target, (ColumnParallelLinear, RowParallelLinear))
             and not isinstance(target, LoraLayer)):
-        new_module = _create_new_module(lora_config, adapter_name, target)  # get a BLORA module
-        _replace_module(parent, target_name, new_module, target)
+        new_module = _create_new_module(lora_config, adapter_name, target)  # get a BLORA module, e.g. BLoraColumnParallelLinear()
+        _replace_module(parent,         # LlamaAttention
+                        target_name,    # qkv_proj | o_proj
+                        new_module,     # BLoraColumnParallelLinear()
+                        target)         # ColumnParallelLinear() | RowParallelLinear()
         
     elif isinstance(target, LoraLayer):
         target.update_layer(adapter_name, lora_config.r,
@@ -82,6 +123,10 @@ def add_lora_adapter(model: torch.nn.Module,
                                              revision=None,
                                              use_auth_token=None)
     key_list = [key for key, _ in model.named_modules()]
+        
+    print("LOra target modules")
+    for item in lora_config.target_modules:
+        print(item)
     
     model_state_dict_be = model.state_dict()
     
@@ -89,27 +134,37 @@ def add_lora_adapter(model: torch.nn.Module,
     
     # TODO: we should re-construct the logic from here to fit LlaMa LoRA
     
-    # for item in lora_config.target_modules:
-    #     print(item)
     
     for key in key_list:
-        # find target module
+        # ==== OLD ====
         target_module_found = any(
-            re.match(f".*\\.{target_key}$", key)
+            re.match(f".*\\.{target_key}$", key)    
             for target_key in lora_config.target_modules) or any(
                 target_key == key for target_key in lora_config.target_modules)
+            
+        # ==== NEW ====
+        target_module_found = any(
+            re.search(target_key, key) for target_key in lora_config.target_modules) or any(
+                target_key == key for target_key in lora_config.target_modules)
+            
+        # key: qkv_proj
+        # target_key: q_proj, k_proj, v_proj
+            
         if not target_module_found:
             continue
         parent, target, target_name = _get_submodules(model, key)
+        # parent: LlamaAttention
+        # target: ColumnParallelLinear() | RowParallelLinear()
+        # target_name: qkv_proj | o_proj
+        
         # create and replace
-        _create_and_replace(lora_config, adapter_name, target, target_name,
-                            parent)
+        _create_and_replace(lora_config, 
+                            adapter_name, # "adapter_1"
+                            target,       # ColumnParallelLinear()
+                            target_name,  # qkv_proj
+                            parent)       # LlamaAttention
 
     adapters_weights = torch.load(f"{lora_path}/{WEIGHTS_NAME}")
-    # for item in adapters_weights.keys():
-    #     print(item)
-    
-
 
     processed_adapter_state_dict = {}
     for key, value in adapters_weights.items():
@@ -143,6 +198,15 @@ def add_lora_adapter(model: torch.nn.Module,
 
     model_state_dict_af = model.state_dict()
     print(f"diff: {len(model_state_dict_af) - len(model_state_dict_be)}")
+    
+    # print("==================================================")
+    # for item in model_state_dict_be.keys():
+    #     print(item)
+    # print("===")
+    # for item in model_state_dict_af.keys():
+    #     print(item)
+        
+    # print(model)
 
     model.load_lora_weights_parallel(state_dict)
     model.cuda()
