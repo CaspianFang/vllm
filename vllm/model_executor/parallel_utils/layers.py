@@ -120,8 +120,9 @@ class ColumnParallelLinear(torch.nn.Module):
         skip_bias_add: bool = False,
         params_dtype: Optional[torch.dtype] = None,
         quant_config: Optional[QuantizationConfig] = None,
+        **kwargs
     ):
-        super(ColumnParallelLinear, self).__init__()
+        super().__init__(**kwargs)
 
         # Keep input parameters
         self.input_size = input_size
@@ -344,6 +345,7 @@ class BLoraColumnParallelLinear(ColumnParallelLinear, LoraLayer):
         LoraLayer.__init__(self,
                            in_features=input_size,
                            out_features=output_size)
+
         self.update_layer(adapter_name, r, lora_alpha, lora_dropout,
                           init_lora_weights)
         self.active_adapter_ = adapter_name
@@ -364,15 +366,15 @@ class BLoraColumnParallelLinear(ColumnParallelLinear, LoraLayer):
         return output, output_bias
     
 
-    
 class QKVLoraLayer(torch.nn.Module):
     def __init__(self,
-                 input_size: int,
-                 output_size: int):
-        super(QKVLoraLayer, self).__init__()
-        self.q_lora = LoraLayer(in_features=input_size, out_features=output_size)
-        self.k_lora = LoraLayer(in_features=input_size, out_features=output_size)
-        self.v_lora = LoraLayer(in_features=input_size, out_features=output_size)
+                 in_features: int,
+                 out_features: int,
+                 **kwargs):
+        super().__init__(**kwargs)
+        self.q_lora = LoraLayer(in_features, out_features)
+        self.k_lora = LoraLayer(in_features, out_features)
+        self.v_lora = LoraLayer(in_features, out_features)
         
         
     def update_layer(self, adapter_name, r, lora_alpha, lora_dropout, init_lora_weights):
@@ -408,8 +410,7 @@ class QKVLoraLayer(torch.nn.Module):
         return lora_out
         
     
-class BLoraQKVColumnParallelLinear(QKVLoraLayer, ColumnParallelLinear):
-
+class BLoraQKVColumnParallelLinear(ColumnParallelLinear, QKVLoraLayer):
     def __init__(
         self,
         input_size: int,
@@ -423,14 +424,20 @@ class BLoraQKVColumnParallelLinear(QKVLoraLayer, ColumnParallelLinear):
         r: int = 0,
         lora_alpha: int = 1,
         lora_dropout: float = 0.0,
-        **kwargs,
+        **kwargs
     ):
         init_lora_weights = kwargs.pop('init_lora_weights', True)
+        
+        super().__init__(input_size=input_size, output_size=output_size, bias=bias,
+                         gather_output=gather_output, skip_bias_add=skip_bias_add,
+                         params_dtype=params_dtype, quant_config=quant_config, 
+                         in_features=input_size, out_features=output_size, **kwargs)
 
-        ColumnParallelLinear.__init__(self, input_size, output_size, bias,
-                                      gather_output, skip_bias_add,
-                                      params_dtype, quant_config)
-        QKVLoraLayer.__init__(self, input_size=input_size, output_size=output_size)
+        # QKVLoraLayer.__init__(self, in_features=input_size, out_features=output_size)
+
+        # ColumnParallelLinear.__init__(self, input_size, output_size, bias,
+        #                               gather_output, skip_bias_add,
+        #                               params_dtype, quant_config)
         
         self.update_layer(adapter_name, r, lora_alpha, lora_dropout,
                                     init_lora_weights)
