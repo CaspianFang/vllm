@@ -226,8 +226,9 @@ class RowParallelLinear(torch.nn.Module):
         params_dtype: Optional[torch.dtype] = None,
         reduce_results: bool = True,
         quant_config: Optional[QuantizationConfig] = None,
+        **kwargs
     ):
-        super().__init__()
+        super().__init__(**kwargs)
         # Keep input parameters
         self.input_size = input_size
         self.output_size = output_size
