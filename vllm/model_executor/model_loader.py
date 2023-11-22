@@ -13,6 +13,8 @@ from vllm.model_executor.weight_utils import (get_quant_config,
 
 from vllm.model_executor.lora_utils import add_lora_adapter # MODIFY
 
+import time
+
 # TODO(woosuk): Lazy-load the model classes.
 _MODEL_REGISTRY = {
     "AquilaModel": AquilaForCausalLM,
@@ -68,6 +70,9 @@ def _get_model_architecture(config: PretrainedConfig) -> Type[nn.Module]:
 
 def get_model(model_config: ModelConfig,
               lora_configs: List[Tuple[str, str]] = None) -> nn.Module:     # MODIFY
+    for item in lora_configs:
+        print(item)
+    
     model_class = _get_model_architecture(model_config.hf_config)
 
     # Get the quantization config.
@@ -112,10 +117,6 @@ def get_model(model_config: ModelConfig,
                                model_config.load_format, model_config.revision)
             model = model.cuda()
             
-    # print("====== MODEL ======")
-    # for name in model.state_dict().keys():
-    #     print(name)
-            
     # MODIFY
     # load lora adapter
     if lora_configs is not None:
@@ -125,5 +126,10 @@ def get_model(model_config: ModelConfig,
             add_lora_adapter(model=model,
                              lora_path=lora_path,
                              adapter_name=adapter_name)
+            
+    # for item in model.state_dict().keys():
+    #     print(item)
+        
+    # time.sleep(10)
     # END
     return model.eval()

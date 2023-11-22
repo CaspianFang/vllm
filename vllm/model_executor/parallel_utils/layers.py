@@ -404,6 +404,9 @@ class QKVLoraLayer(torch.nn.Module):
                             lora: LoraLayer,
                             lora_pos: str) -> torch.Tensor:
         lora_out = torch.zeros_like(output)
+        
+        # compute each lora
+        # TODO: 这里好像是通过lora_mask和lora_id来计算每个lora的。具体原理还没想清楚
         for lora_id, lora_mask in lora_masks.items():
             if lora_id in lora.lora_A.keys():
                 lora_result = lora.scaling[lora_id] * lora.lora_B[lora_id](lora.lora_A[lora_id](x))
@@ -454,13 +457,8 @@ class BLoraQKVColumnParallelLinear(ColumnParallelLinear, QKVLoraLayer):
         
         self.update_layer(adapter_name, r, lora_alpha, lora_dropout, init_lora_weights)
         
-        print(f"input_size: {input_size}")
-        print(f"output_size: {output_size}")
-        
         self.q_lora_A = self.q_lora.lora_A
-        print(f"q_lora_A shape: {self.q_lora_A[adapter_name].weight.shape}")
         self.q_lora_B = self.q_lora.lora_B
-        print(f"q_lora_B shape: {self.q_lora_B[adapter_name].weight.shape}")
         
         self.k_lora_A = self.k_lora.lora_A
         self.k_lora_B = self.k_lora.lora_B
@@ -483,9 +481,6 @@ class BLoraQKVColumnParallelLinear(ColumnParallelLinear, QKVLoraLayer):
         
         # x: input tensor
         output += QKVLoraLayer.forward(self, x, self.lora_masks, output)
-        
-        print("=============== ^^ ==============")
-        print(output.shape)
         
         output = output.to(previous_dtype)
         if output_bias is not None:

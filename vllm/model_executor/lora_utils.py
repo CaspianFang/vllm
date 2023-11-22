@@ -3,6 +3,7 @@ from peft.tuners.lora import LoraLayer
 from peft import LoraConfig
 import re
 import torch
+import time
 
 WEIGHTS_NAME = "adapter_model.bin"
 PREFIX = "base_model.model."
@@ -61,38 +62,6 @@ def _replace_module(parent,
                                              
     child:      ColumnParallelLinear():      weight,
     """
-    # print("===============")
-    # for name, item in new_module.named_modules():
-    #     if isinstance(item, torch.nn.Module):
-    #         print("==")
-    #         for name_, mod in item.named_modules():
-    #             print(name_, ":", mod)
-    print("======")
-    if isinstance(new_module, BLoraQKVColumnParallelLinear):
-        # for item in new_module.state_dict().keys():
-        #     print(item)
-        # for name, module in new_module.named_children():
-        #     print(name)
-        #     if isinstance(module, QKVLoraLayer):
-        #         for item in module.state_dict().keys():
-        #             print(item)
-        for item in new_module.state_dict().keys():
-            print(item)
-            
-    elif isinstance(new_module, BLoraRowParallelLinear):
-        # for name, module in new_module.named_children():
-        #     print(name)
-        for item in new_module.state_dict().keys():
-            print(item)
-        
-        
-        
-    # print("======")
-    # for name, item in child.named_modules():
-    #     print(name, ":", item)
-    # print("======")
-    # for item in child.state_dict().keys():
-    #     print(item)
     new_module.weight = child.weight
     
     if getattr(child, "state", None) is not None:
@@ -116,8 +85,9 @@ def _create_and_replace(lora_config, adapter_name,
                         new_module,     # BLoraColumnParallelLinear()
                         target)         # ColumnParallelLinear() | RowParallelLinear()
         
-    elif isinstance(target, LoraLayer):
-        target.update_layer(adapter_name, lora_config.r,
+    elif isinstance(target, (BLoraQKVColumnParallelLinear, LoraLayer)):
+        target.update_layer(adapter_name, 
+                            lora_config.r,
                             lora_config.lora_alpha, lora_config.lora_dropout,
                             lora_config.init_lora_weights)
 
@@ -129,10 +99,7 @@ def add_lora_adapter(model: torch.nn.Module,
                                              revision=None,
                                              use_auth_token=None)
     key_list = [key for key, _ in model.named_modules()]
-        
-    print("LOra target modules")
-    for item in lora_config.target_modules:
-        print(item)
+
     
     model_state_dict_be = model.state_dict()
     
@@ -142,6 +109,8 @@ def add_lora_adapter(model: torch.nn.Module,
     
     
     for key in key_list:
+        if "lora_" in key:
+            continue
         # ==== OLD ====
         target_module_found = any(
             re.match(f".*\\.{target_key}$", key)    
@@ -158,6 +127,7 @@ def add_lora_adapter(model: torch.nn.Module,
             
         if not target_module_found:
             continue
+
         parent, target, target_name = _get_submodules(model, key)
         # parent: LlamaAttention
         # target: ColumnParallelLinear() | RowParallelLinear()
@@ -191,28 +161,12 @@ def add_lora_adapter(model: torch.nn.Module,
                 k = f"{k}.{adapter_name}"
         state_dict[k] = v
 
-    # print("====== LORA ======")
-    # for name in state_dict.keys():
-    #     print(name)
+    # https://github.com/huggingface/peft/blob/70302d7b4fc667f6b2e80ac1b8cccde081270d1e/src/peft/peft_model.py#L555
+
     
-    # TODO: https://github.com/huggingface/peft/blob/70302d7b4fc667f6b2e80ac1b8cccde081270d1e/src/peft/peft_model.py#L555
-    # 怀疑是这一部分开始改变了模型的架构，因为load_state_dict的时候，只会加载权重，而不会改变模型的架构。
-    
-    # print("====== MODEL ======")
-    # for name in model.state_dict().keys():
-    #     print(name)
 
     model_state_dict_af = model.state_dict()
     print(f"diff: {len(model_state_dict_af) - len(model_state_dict_be)}")
-    
-    # print("==================================================")
-    # for item in model_state_dict_be.keys():
-    #     print(item)
-    # print("===")
-    # for item in model_state_dict_af.keys():
-    #     print(item)
-        
-    # print(model)
 
     model.load_lora_weights_parallel(state_dict)
     model.cuda()
