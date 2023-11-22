@@ -22,8 +22,8 @@ def _create_new_module(lora_config, adapter_name, target):
     lora_dropout = lora_config.lora_dropout
     if isinstance(target, ColumnParallelLinear):
         new_module = BLoraQKVColumnParallelLinear(
-            input_size=target.input_size,
-            output_size=target.output_size_per_partition,
+            input_size=target.input_size,   # 4096 
+            output_size=target.output_size_per_partition,   # 4096 * 3
             adapter_name=adapter_name,
             bias=target.bias,
             gather_output=target.gather_output,
@@ -76,8 +76,14 @@ def _replace_module(parent,
         #     if isinstance(module, QKVLoraLayer):
         #         for item in module.state_dict().keys():
         #             print(item)
-        for name, item in new_module.named_modules():
-            print(name, ":", item)
+        for item in new_module.state_dict().keys():
+            print(item)
+            
+    elif isinstance(new_module, BLoraRowParallelLinear):
+        # for name, module in new_module.named_children():
+        #     print(name)
+        for item in new_module.state_dict().keys():
+            print(item)
         
         
         

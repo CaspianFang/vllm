@@ -378,40 +378,52 @@ class QKVLoraLayer(torch.nn.Module):
         self.v_lora = LoraLayer(in_features, out_features)
         
         
-    def update_layer(self, adapter_name, r, lora_alpha, lora_dropout, init_lora_weights):
-        self.q_lora.update_layer("q_"+adapter_name, r, lora_alpha, lora_dropout, init_lora_weights)
-        self.k_lora.update_layer("k_"+adapter_name, r, lora_alpha, lora_dropout, init_lora_weights)
-        self.v_lora.update_layer("v_"+adapter_name, r, lora_alpha, lora_dropout, init_lora_weights)
-        self.active_adapter_ = adapter_name
+    # def update_layer(self, adapter_name, r, lora_alpha, lora_dropout, init_lora_weights):
+    #     self.q_lora.update_layer(adapter_name, r, lora_alpha, lora_dropout, init_lora_weights)
+    #     self.k_lora.update_layer(adapter_name, r, lora_alpha, lora_dropout, init_lora_weights)
+    #     self.v_lora.update_layer(adapter_name, r, lora_alpha, lora_dropout, init_lora_weights)
+    #     self.active_adapter_ = adapter_name
         
     def forward(self, 
                 x: torch.Tensor, 
+                lora_masks,
                 output: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:       # the input tensor from the previous layer
         # previous_dtype = x.dtype
         x = x.to(self.q_lora.lora_A[self.active_adapter_].weight.dtype)
         
-        q_lora_out = compulate_lora(x, output, self.q_lora)
-        k_lora_out = compulate_lora(x, output, self.k_lora)
-        v_lora_out = compulate_lora(x, output, self.v_lora)
-        return q_lora_out, k_lora_out, v_lora_out
+        q_lora_out = self.compute_single_lora(x, output, lora_masks, self.q_lora, 'q')
+        k_lora_out = self.compute_single_lora(x, output, lora_masks, self.k_lora, 'k')
+        v_lora_out = self.compute_single_lora(x, output, lora_masks, self.v_lora, 'v')
+        return q_lora_out + k_lora_out + v_lora_out
         
         
     def compute_single_lora(self, 
                             x: torch.Tensor, 
                             output: torch.Tensor,
-                            lora: LoraLayer) -> torch.Tensor:
-        lora_masks = lora.lora_masks
+                            lora_masks,
+                            lora: LoraLayer,
+                            lora_pos: str) -> torch.Tensor:
         lora_out = torch.zeros_like(output)
         for lora_id, lora_mask in lora_masks.items():
             if lora_id in lora.lora_A.keys():
                 lora_result = lora.scaling[lora_id] * lora.lora_B[lora_id](lora.lora_A[lora_id](x))
-                lora_out += (lora_result * lora_mask.unsqueeze(1).unsqueeze(2))
+                if lora_pos == 'q':
+                    lora_out[:, :, :4096] += lora_result * lora_mask.unsqueeze(1).unsqueeze(2)
+                elif lora_pos == 'k':
+                    lora_out[:, :, 4096:8192] += lora_result * lora_mask.unsqueeze(1).unsqueeze(2)
+                elif lora_pos == 'v':
+                    lora_out[:, :, 8192:] += lora_result * lora_mask.unsqueeze(1).unsqueeze(2)
             
             
         return lora_out
         
     
 class BLoraQKVColumnParallelLinear(ColumnParallelLinear, QKVLoraLayer):
+    """
+    we are talking about a single decoder layer.
+    with backbone QKV attention
+    and lora layer (q, k, v)
+    """
     def __init__(
         self,
         input_size: int,
@@ -432,7 +444,7 @@ class BLoraQKVColumnParallelLinear(ColumnParallelLinear, QKVLoraLayer):
         super().__init__(input_size=input_size, output_size=output_size, bias=bias,
                          gather_output=gather_output, skip_bias_add=skip_bias_add,
                          params_dtype=params_dtype, quant_config=quant_config, 
-                         in_features=input_size, out_features=output_size, **kwargs)
+                         in_features=input_size, out_features=output_size // 3, **kwargs)
 
         # QKVLoraLayer.__init__(self, in_features=input_size, out_features=output_size)
 
@@ -440,18 +452,39 @@ class BLoraQKVColumnParallelLinear(ColumnParallelLinear, QKVLoraLayer):
         #                               gather_output, skip_bias_add,
         #                               params_dtype, quant_config)
         
-        self.update_layer(adapter_name, r, lora_alpha, lora_dropout,
-                                    init_lora_weights)
+        self.update_layer(adapter_name, r, lora_alpha, lora_dropout, init_lora_weights)
+        
+        print(f"input_size: {input_size}")
+        print(f"output_size: {output_size}")
+        
+        self.q_lora_A = self.q_lora.lora_A
+        print(f"q_lora_A shape: {self.q_lora_A[adapter_name].weight.shape}")
+        self.q_lora_B = self.q_lora.lora_B
+        print(f"q_lora_B shape: {self.q_lora_B[adapter_name].weight.shape}")
+        
+        self.k_lora_A = self.k_lora.lora_A
+        self.k_lora_B = self.k_lora.lora_B
+        
+        self.v_lora_A = self.v_lora.lora_A
+        self.v_lora_B = self.v_lora.lora_B
+        
+        
+    def update_layer(self, adapter_name, r, lora_alpha, lora_dropout, init_lora_weights):
+        self.q_lora.update_layer(adapter_name, r, lora_alpha, lora_dropout, init_lora_weights)
+        self.k_lora.update_layer(adapter_name, r, lora_alpha, lora_dropout, init_lora_weights)
+        self.v_lora.update_layer(adapter_name, r, lora_alpha, lora_dropout, init_lora_weights)
+        self.active_adapter_ = adapter_name
+        
+        
         
     def forward(self, x: torch.Tensor):
         previous_dtype = x.dtype
         output, output_bias = ColumnParallelLinear.forward(self, x)
         
         # x: input tensor
-        q_lora_out, k_lora_out, v_lora_out = QKVLoraLayer.forward(x, output)
+        output += QKVLoraLayer.forward(self, x, self.lora_masks, output)
         
         print("=============== ^^ ==============")
-        print(q_lora_out.shape)
         print(output.shape)
         
         output = output.to(previous_dtype)
@@ -490,6 +523,8 @@ class BLoraRowParallelLinear(RowParallelLinear, LoraLayer):
         self.update_layer(adapter_name, r, lora_alpha, lora_dropout,
                           init_lora_weights)
         self.active_adapter_ = adapter_name
+
+        
 
     def forward(self, x: torch.Tensor):
         previous_dtype = x.dtype

@@ -496,26 +496,39 @@ class LlamaForCausalLM(nn.Module):
         
         tp_rank = get_tensor_model_parallel_rank()
         for name, loaded_weight in lora_state_dict.items():
-            if name not in model_state_dict.keys():
-                raise ValueError(f"No module named {name} " +
+            """
+            lora_name: model.layers.0.self_attn.q_proj.lora_A.adapter_1.weight
+            target:    model.layers.0.self_attn.qkv_proj.q_lora_A.adapter_1.weight
+            """
+            if "o_proj" in name:
+                new_name = name
+            else:
+                lora_name_split = name.split(".")
+                lora_slides = lora_name_split[4:6]
+                concat_name = lora_slides[0][:2] + lora_slides[1]
+                new_name = ".".join(lora_name_split[:4] +['qkv_proj']+ [concat_name]+lora_name_split[6:])
+            
+            
+            if new_name not in model_state_dict.keys():
+                raise ValueError(f"No module named {new_name} " +
                                  f"in base model: {model_state_dict.keys()}")
-            param = model_state_dict[name]
+            param = model_state_dict[new_name]
             column_parallel_weights = []
             row_parallel_weights = []
-            if "qkv_proj" in name:
-                if "lora_B" in name:
+            if "qkv_proj" in new_name:
+                if "lora_B" in new_name:
                     column_parallel_weights.append("lora_B")
 
-            elif "o_proj" in name:
-                if "lora_A" in name:
+            elif "o_proj" in new_name:
+                if "lora_A" in new_name:
                     row_parallel_weights.append("lora_A")
             else:
                 raise ValueError("Only support target module for qkv_proj" +
-                                 f"and o_proj now! Target module:{name}")
+                                 f"and o_proj now! Target module:{new_name}")
             load_tensor_parallel_weights(
                 param,
                 loaded_weight,
-                name,
+                new_name,
                 column_parallel_weights,
                 row_parallel_weights,
                 tp_rank,
