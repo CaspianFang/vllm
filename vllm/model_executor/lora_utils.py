@@ -78,17 +78,18 @@ def _create_and_replace(lora_config, adapter_name,
                         target_name,    # qkv_proj | o_proj
                         parent):        # LlamaAttention
     if (isinstance(target, (ColumnParallelLinear, RowParallelLinear))
-            and not isinstance(target, LoraLayer)):
+            and not isinstance(target, (QKVLoraLayer, LoraLayer))):
         new_module = _create_new_module(lora_config, adapter_name, target)  # get a BLORA module, e.g. BLoraColumnParallelLinear()
         _replace_module(parent,         # LlamaAttention
                         target_name,    # qkv_proj | o_proj
                         new_module,     # BLoraColumnParallelLinear()
                         target)         # ColumnParallelLinear() | RowParallelLinear()
         
-    elif isinstance(target, (BLoraQKVColumnParallelLinear, LoraLayer)):
+    elif isinstance(target, (QKVLoraLayer, LoraLayer)):
         target.update_layer(adapter_name, 
                             lora_config.r,
-                            lora_config.lora_alpha, lora_config.lora_dropout,
+                            lora_config.lora_alpha, 
+                            lora_config.lora_dropout,
                             lora_config.init_lora_weights)
 
 
@@ -132,6 +133,8 @@ def add_lora_adapter(model: torch.nn.Module,
         # parent: LlamaAttention
         # target: ColumnParallelLinear() | RowParallelLinear()
         # target_name: qkv_proj | o_proj
+
+        print(f"target: {target!r}")
         
         # create and replace
         _create_and_replace(lora_config, 
@@ -167,6 +170,17 @@ def add_lora_adapter(model: torch.nn.Module,
 
     model_state_dict_af = model.state_dict()
     print(f"diff: {len(model_state_dict_af) - len(model_state_dict_be)}")
+    
+    # MODIFY
+    for key in model_state_dict_af.keys():
+        if key not in model_state_dict_be.keys():
+            print(key)
+    
+    print("=== model_state_dict_af ===")
+
+    for key in model_state_dict_af.keys():
+        print(key)
+    # END
 
     model.load_lora_weights_parallel(state_dict)
     model.cuda()

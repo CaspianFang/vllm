@@ -404,18 +404,20 @@ class QKVLoraLayer(torch.nn.Module):
                             lora: LoraLayer,
                             lora_pos: str) -> torch.Tensor:
         lora_out = torch.zeros_like(output)
+        qkv_total_size = output.shape[-1]
+        qkv_each_size = qkv_total_size // 3
         
         # compute each lora
-        # TODO: 这里好像是通过lora_mask和lora_id来计算每个lora的。具体原理还没想清楚
+        # TODO(yazhu): 这里好像是通过lora_mask和lora_id来计算每个lora的。具体原理还没想清楚
         for lora_id, lora_mask in lora_masks.items():
             if lora_id in lora.lora_A.keys():
                 lora_result = lora.scaling[lora_id] * lora.lora_B[lora_id](lora.lora_A[lora_id](x))
                 if lora_pos == 'q':
-                    lora_out[:, :, :4096] += lora_result * lora_mask.unsqueeze(1).unsqueeze(2)
+                    lora_out[:, :, :qkv_each_size] += lora_result * lora_mask.unsqueeze(1).unsqueeze(2)
                 elif lora_pos == 'k':
-                    lora_out[:, :, 4096:8192] += lora_result * lora_mask.unsqueeze(1).unsqueeze(2)
+                    lora_out[:, :, qkv_each_size:2 * qkv_each_size] += lora_result * lora_mask.unsqueeze(1).unsqueeze(2)
                 elif lora_pos == 'v':
-                    lora_out[:, :, 8192:] += lora_result * lora_mask.unsqueeze(1).unsqueeze(2)
+                    lora_out[:, :, 2 * qkv_each_size:] += lora_result * lora_mask.unsqueeze(1).unsqueeze(2)
             
             
         return lora_out
@@ -471,6 +473,18 @@ class BLoraQKVColumnParallelLinear(ColumnParallelLinear, QKVLoraLayer):
         self.q_lora.update_layer(adapter_name, r, lora_alpha, lora_dropout, init_lora_weights)
         self.k_lora.update_layer(adapter_name, r, lora_alpha, lora_dropout, init_lora_weights)
         self.v_lora.update_layer(adapter_name, r, lora_alpha, lora_dropout, init_lora_weights)
+        
+        # MODIFY
+        # self.q_lora_A = self.q_lora.lora_A
+        # self.q_lora_B = self.q_lora.lora_B
+        
+        # self.k_lora_A = self.k_lora.lora_A
+        # self.k_lora_B = self.k_lora.lora_B
+        
+        # self.v_lora_A = self.v_lora.lora_A
+        # self.v_lora_B = self.v_lora.lora_B
+        # END
+
         self.active_adapter_ = adapter_name
         
         
@@ -480,6 +494,9 @@ class BLoraQKVColumnParallelLinear(ColumnParallelLinear, QKVLoraLayer):
         output, output_bias = ColumnParallelLinear.forward(self, x)
         
         # x: input tensor
+        # MODIFY
+        # print(f"================output.shape: {output.shape!r}=================")
+        # END
         output += QKVLoraLayer.forward(self, x, self.lora_masks, output)
         
         output = output.to(previous_dtype)
