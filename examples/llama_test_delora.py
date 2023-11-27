@@ -39,7 +39,7 @@ if __name__ == "__main__":
                                      top_k=-1,
                                      max_tokens=100,
                                      use_beam_search=False,
-                                     lora_id="adapter_2")
+                                     lora_id="adapter_3")
     llm._add_request(prompt=prompt,
                      prompt_token_ids=None,
                      sampling_params=sampling_params)
