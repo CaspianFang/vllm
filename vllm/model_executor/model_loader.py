@@ -69,9 +69,12 @@ def _get_model_architecture(config: PretrainedConfig) -> Type[nn.Module]:
 
 
 def get_model(model_config: ModelConfig,
-              lora_configs: List[Tuple[str, str]] = None) -> nn.Module:     # MODIFY
+              lora_configs: List[Tuple[str, str]] = None,
+              delora_name: str = None) -> nn.Module:     # MODIFY
     for item in lora_configs:
         print(item)
+
+    print(f"delora_name: {delora_name}") # MODIFY
     
     model_class = _get_model_architecture(model_config.hf_config)
 
@@ -125,7 +128,8 @@ def get_model(model_config: ModelConfig,
             adapter_name = lora_config[1]
             add_lora_adapter(model=model,
                              lora_path=lora_path,
-                             adapter_name=adapter_name)
+                             adapter_name=adapter_name,
+                             delora_name=delora_name)
             
     # for item in model.state_dict().keys():
     #     print(item)

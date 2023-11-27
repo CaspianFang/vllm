@@ -73,6 +73,7 @@ class LLM:
         swap_space: int = 4,
         lora_paths: List[str] = None,
         adapter_names: List[str] = None,
+        delora_name: str = None,
         **kwargs,
     ) -> None:
         if "disable_log_stats" not in kwargs:
@@ -92,6 +93,7 @@ class LLM:
             swap_space=swap_space,
             lora_paths=lora_paths,        # MODIFY
             adapter_names=adapter_names,
+            delora_name=delora_name, # MODIFY
             **kwargs,
         )
         self.llm_engine = LLMEngine.from_engine_args(engine_args)

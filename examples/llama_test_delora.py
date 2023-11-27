@@ -7,14 +7,15 @@ if __name__ == "__main__":
     path = "/vllm_workspace/weights/backbone/llama_7b_hf"
     lora_path = "/vllm_workspace/weights/loras/alpaca-lora-7b"
     lora_path_2 = "/vllm_workspace/weights/loras/bactrian-x-llama-7b-lora"
-    # lora_path_2 = "/vllm_workspace/weights/loras/wizardLM-lora-7b"
+    lora_path_3 = "/vllm_workspace/weights/loras/wizardLM-lora-7b"
     
     # TODO: 1. multi-lora loading (FIXED)   2. ray optim
     
     llm = LLM(model=path,
               trust_remote_code=True,
-              lora_paths=[lora_path, lora_path_2],
-              adapter_names=["adapter_1", "adapter_2"])
+              lora_paths=[lora_path, lora_path_2, lora_path_3],
+              adapter_names=["adapter_1", "adapter_2", "adapter_3"],
+              delora_name="adapter_3")
             #   lora_paths=[lora_path],
             #   adapter_names=["adapter_1"])
     # )

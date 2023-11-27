@@ -68,7 +68,8 @@ class LLMEngine:
         distributed_init_method: str,
         placement_group: Optional["PlacementGroup"],
         log_stats: bool,
-        lora_configs: List[Tuple[str, str]] = None      # MODIFY
+        lora_configs: List[Tuple[str, str]] = None,      # MODIFY
+        delora_name: str = None,          # MODIFY
     ) -> None:
         logger.info(
             "Initializing an LLM engine with config: "
@@ -95,6 +96,7 @@ class LLMEngine:
         self.scheduler_config = scheduler_config
         self.log_stats = log_stats
         self.lora_configs = lora_configs    # MODIFY
+        self.delora_name = delora_name  # MODIFY
         self._verify_args()
 
         self.tokenizer = get_tokenizer(
@@ -140,6 +142,7 @@ class LLMEngine:
             0,
             distributed_init_method,
             self.lora_configs,      # MODIFY
+            self.delora_name,     # MODIFY
         )
         self.workers.append(worker)
         self._run_workers(
@@ -243,6 +246,8 @@ class LLMEngine:
             lora_configs = []
             for lora_path, adapter_name in zip(lora_paths, adapter_names):
                 lora_configs.append((lora_path, adapter_name))
+
+        delora_name: str = engine_args.delora_name
         # END
         
         # Create the LLM engine.
@@ -250,7 +255,8 @@ class LLMEngine:
                      distributed_init_method,
                      placement_group,
                      log_stats=not engine_args.disable_log_stats,
-                     lora_configs=lora_configs,)    # MODIFY
+                     lora_configs=lora_configs,
+                     delora_name=delora_name)    # MODIFY
         return engine
 
     def add_request(

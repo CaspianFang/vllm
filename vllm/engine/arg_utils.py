@@ -36,6 +36,7 @@ class EngineArgs:
     # MODIFY
     lora_paths: Optional[List[str]] = None
     adapter_names: Optional[List[str]] = None
+    delora_name: Optional[str] = None
     # END
 
     def __post_init__(self):

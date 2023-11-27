@@ -351,8 +351,10 @@ class LlamaForCausalLM(nn.Module):
             lora_masks[lora_id] = mask
 
         for _, module in self.model.named_modules():
+            # TODO: make it correct
             # if isinstance(module,
             #               (BLoraColumnParallelLinear, BLoraRowParallelLinear)):
+            #     module.lora_masks = lora_masks
             if isinstance(module,
                           (BLoraQKVColumnParallelLinear, BLoraRowParallelLinear)):
                 module.lora_masks = lora_masks
