@@ -1,8 +1,8 @@
 from vllm import LLM, SamplingParams
 import time
 if __name__ == "__main__":
-    # prompt = "Hello, my dog is cute"
-    prompt = "I am a graduate student at Johns Hopkins."
+    prompt = "Hello, my dog is cute"
+    # prompt = "I am a graduate student at Johns Hopkins."
     prompts = [prompt]
     path = "/vllm_workspace/weights/backbone/llama_7b_hf"
     lora_path = "/vllm_workspace/weights/loras/alpaca-lora-7b"

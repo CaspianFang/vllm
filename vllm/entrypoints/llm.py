@@ -80,6 +80,7 @@ class LLM:
             kwargs["disable_log_stats"] = True
 
         # MODIFY
+        # delora_name must be in adapter_names. It is loaded with other adapters.
         if delora_name is not None:
             assert delora_name in adapter_names, "delora_name must be in adapter_names"
 
