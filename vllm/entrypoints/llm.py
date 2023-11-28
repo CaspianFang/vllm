@@ -78,6 +78,11 @@ class LLM:
     ) -> None:
         if "disable_log_stats" not in kwargs:
             kwargs["disable_log_stats"] = True
+
+        # MODIFY
+        if delora_name is not None:
+            assert delora_name in adapter_names, "delora_name must be in adapter_names"
+
         engine_args = EngineArgs(
             model=model,
             tokenizer=tokenizer,
