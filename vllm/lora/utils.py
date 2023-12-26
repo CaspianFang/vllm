@@ -5,7 +5,7 @@ from torch import nn
 
 logger = logging.getLogger(__name__)
 
-
+ # this func replace backbone module with LoRALayers
 def replace_submodule(model: nn.Module, module_name: str,
                       new_module: nn.Module) -> nn.Module:
     """Replace a submodule in a model with a new module."""

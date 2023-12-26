@@ -64,7 +64,7 @@ class SchedulerOutputs:
 
     @property
     def lora_requests(self) -> Set[LoRARequest]:
-        return {g.lora_request for g in self.scheduled_seq_groups}
+        return {g.lora_request for g in self.scheduled_seq_groups} ## hqf output all loras be used in an iteration
 
 
 class Scheduler:

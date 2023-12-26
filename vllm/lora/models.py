@@ -50,7 +50,7 @@ EMBEDDING_PADDING_MODULES = ["lm_head"]
 
 _GLOBAL_LORA_ID = 0
 
-
+##  token - > active_lora_id
 def convert_mapping(
     mapping: LoRAMapping, lora_id_to_index: List[Optional[int]],
     max_loras: int, vocab_size: int, extra_vocab_size: int
@@ -316,7 +316,7 @@ class LoRAModelManager:
         self.max_num_seqs = max_num_seqs
         assert self.capacity >= self.max_num_seqs
         self.max_num_batched_tokens = math.ceil(max_num_batched_tokens / 8) * 8
-        self.lora_id_to_index: List[Optional[int]] = [None] * self._lora_slots
+        self.lora_id_to_index: List[Optional[int]] = [None] * self._lora_slots   ## lora_id_index [ index ] = lora_id of activate_lora
         self.vocab_size = vocab_size
         self.base_indices = torch.empty(self.max_num_batched_tokens,
                                         dtype=torch.long,
@@ -342,12 +342,13 @@ class LoRAModelManager:
         self.packed_modules_mapping = copy.deepcopy(packed_modules_mapping)
         self.packed_modules: Dict[str, List[str]] = {}
         self.modules: Dict[str, "LoRALayer"] = {}
-        self._registered_loras: Dict[int, LoRAModel] = {}
+        self._registered_loras: Dict[int, LoRAModel] = {}  ## what's the difference between register loras  and _activate_loras 
         self._active_loras: Dict[int, None] = {}
         self._last_mapping = None
         self._create_lora_modules()
         self.model.lora_manager = self
-
+        self.now_backbone_lora = None   ## LoRAModel for the de-lora 
+        self.now_delora = None
     @property
     def capacity(self) -> int:
         return self.lora_config.max_cpu_loras
@@ -358,7 +359,7 @@ class LoRAModelManager:
 
     def __len__(self) -> int:
         return len(self._registered_loras)
-
+    ##  activate_lora load lora weight to model in gpu 
     def activate_lora(
         self,
         lora_id: int,
@@ -376,7 +377,7 @@ class LoRAModelManager:
         logger.debug(
             f"Activating LoRA. int id: {lora_model.id}, slot index: {index}")
         self.lora_id_to_index[index] = lora_model.id
-        for module_name, module in self.modules.items():
+        for module_name, module in self.modules.items(): ##   all possible LoRALayers -hqf
             module_lora = lora_model.get_lora(module_name)
             if module_lora:
                 module_lora.optimize()
@@ -450,12 +451,12 @@ class LoRAModelManager:
         self._registered_loras.clear()
         self.lora_id_to_index = [None] * self._lora_slots
         self._active_loras.clear()
-
+    # in this method , it change the backbone normal module to LoRALayer - hqf
     def _create_lora_modules(self):
         for module_name, module in self.model.named_modules():
             if not self._match_target_modules(module_name):
                 continue
-
+            
             new_module = replace_submodule(
                 self.model, module_name,
                 from_layer(module, self.capacity, self.lora_config,
@@ -471,7 +472,8 @@ class LoRAModelManager:
             self._register_packed_modules(module_name)
             new_module.set_mapping(self.base_indices, self.sampler_indices,
                                    self.sampler_indices_padded,
-                                   self.embeddings_indices, self.indices_len)
+                                   self.embeddings_indices, self.indices_len)  #init to all zero tensors -hqf
+        print(self.modules.keys())
 
     def register_module(self, module_name: str, module: "LoRALayer"):
         assert isinstance(module, LoRALayer)
@@ -553,7 +555,7 @@ class LoRAModelManager:
             prefix + "." + r if prefix else r for r in replacements
         ]
 
-    def _create_merged_loras_inplace(self, lora_model: LoRAModel) -> None:
+    def _create_merged_loras_inplace(self, lora_model: LoRAModel) -> None:  ##  convert unpacked loras into packed layers
         for module_name, new_module_names in self.packed_modules.items():
             replacement_loras = []
             has_replacement = False
@@ -569,6 +571,61 @@ class LoRAModelManager:
                     continue
                 replacement_loras[i] = None
             lora_model.loras[module_name] = LoRA.pack(replacement_loras)
+    #   add delora side-path to all layers, and change all layers to delora state, is this right?
+    def merged_to_delora_all(self,delora_id)-> None: 
+        self.now_delora = delora_id
+        merged_lora_model = self.get_lora(delora_id)
+        for module_name, module in self.modules.items(): ##   all possible LoRALayers -hqf
+            module_lora = merged_lora_model.get_lora(module_name)
+            if module_lora :
+                assert ( module.running_mode == "merged")
+                module.merged_to_delora(self.lora_id_to_index.index(delora_id))
+            
+                
+    #  change one lora_layer's mode, from unmerged to delora
+    def unmerged_to_delora_one(self,delora_id)->bool:
+        if not self.now_backbone_lora:
+            self.now_backbone_lora = delora_id
+        if not self.now_delora :
+            self.now_delora = delora_id
+        merged_lora_model = self.get_lora(delora_id)
+        all_delora = True
+        need_change = True
+        for module_name, module in self.modules.items(): ##   all possible LoRALayers -hqf
+            module_lora = merged_lora_model.get_lora(module_name)
+            if module_lora and module.running_mode == "unmerged" :
+                if need_change:
+                    module.unmerged_to_delora(self.lora_id_to_index.index(delora_id))
+                    need_change = False
+                else :
+                    all_delora = False
+        return all_delora
+    
+    #   change one lora_layer's mode, from delora to unmerged
+    def delora_to_unmerged_one(self,delora_id)->None:
+        merged_lora_model = self.get_lora(delora_id)
+        all_unmerged = True
+        need_change = True
+        for module_name, module in self.modules.items(): ##   all possible LoRALayers -hqf
+            module_lora = merged_lora_model.get_lora(module_name)
+            if module_lora and module.running_mode == "delora" :
+                if need_change:
+                    module.delora_to_unmerged(self.lora_id_to_index.index(delora_id))
+                    need_change = False
+                else :
+                    all_unmerged = False
+                    break
+        if all_unmerged :
+            self.now_backbone_lora = None
+            self.now_delora = None
+    
+    def delora_to_merged_all(self,delora_id)-> None:
+        merged_lora_model = self.get_lora(delora_id)
+        for module_name, module in self.modules.items(): ##   all possible LoRALayers -hqf
+            module_lora = merged_lora_model.get_lora(module_name)
+            if module_lora and module.running_mode == "delora" :
+                module.delora_to_merged(self.lora_id_to_index.index(delora_id))
+                
 
 
 class LoRALRUCache(LRUCache):

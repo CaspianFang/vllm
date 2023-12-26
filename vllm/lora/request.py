@@ -3,6 +3,9 @@ from dataclasses import dataclass
 
 @dataclass
 class LoRARequest:
+    """
+        A LoRARequest refers to a single LoRA weight ,  lora_id means its name repsented by str  -hqf
+    """
     lora_id: str
     lora_int_id: int
     lora_local_path: str

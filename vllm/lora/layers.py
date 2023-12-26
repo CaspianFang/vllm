@@ -26,6 +26,9 @@ from vllm.model_executor.parallel_utils.utils import split_tensor_along_last_dim
 if TYPE_CHECKING:
     pass
 
+LAYER_RUNNING_MODE = ["merged","unmerged","de-lora"] #  -hqf
+
+##  TODO pass in the de-lora id , and change indices to num_tokens * max_lora
 
 def _apply_lora(
     x: torch.Tensor,
@@ -160,6 +163,9 @@ class LoRAMapping:
 
 
 class LoRALayer(nn.Module):
+    running_mode : str
+    backbone_lora_index : int
+    de_lora_index : int
 
     def create_lora_weights(self, max_loras: int, lora_config: LoRAConfig,
                             model_config: PretrainedConfig) -> None:
@@ -190,6 +196,37 @@ class LoRALayer(nn.Module):
     ):
         """Sets the mapping indices."""
         ...
+    
+    def merged_to_delora(
+        self,
+        delora_index:int,
+    ):
+        """Change the running_mode from merged to delora"""
+        ...
+
+    def unmerged_to_delora(
+        self,
+        delora_index:int,
+    ):
+        """Change the running_mode from unmerged to delora"""
+        ...
+    
+
+    def delora_to_unmerged(
+        self,
+        delora_index:int,
+    ):
+        """Change the running_mode from delora to unmerged"""
+        ...
+    
+    def delora_to_merged(
+        self,
+        delora_index:int,
+    ):
+        """Change the running_mode from delora to merged"""
+        ...
+        
+    
 
 
 class LoRAVocabParallelEmbedding(LoRALayer):
@@ -197,6 +234,7 @@ class LoRAVocabParallelEmbedding(LoRALayer):
     def __init__(self, base_layer: VocabParallelEmbedding) -> None:
         super().__init__()
         self.base_layer = base_layer
+        self.running_mode = "unmerged"
 
     def create_lora_weights(
             self,
@@ -257,6 +295,8 @@ class LoRAVocabParallelEmbedding(LoRALayer):
         self.indices: Optional[torch.Tensor] = None
         self.indices_len: Optional[List[int]] = None
         self.embeddings_indices = None
+        self.de_lora_index = None              # if no de-lora , index = -1
+        self.backbone_lora_index = None
 
     def reset_lora(self, index: int):
         self.lora_a_stacked[index] = 0
@@ -302,6 +342,54 @@ class LoRAVocabParallelEmbedding(LoRALayer):
         self.embeddings_indices = embeddings_indices
         self.indices_len = indices_len
 
+    def merged_to_delora(
+        self,
+        delora_index:int,
+    ):
+        """Change the running_mode from merged to delora"""
+
+        assert (self.running_mode == "merged")
+        assert (self.de_lora_index == None)
+        assert (self.backbone_lora_index != None)
+        assert (self.backbone_lora_index == delora_index)
+        self.running_mode = "delora"
+        self.de_lora_index = delora_index
+        
+
+    def unmerged_to_delora(
+        self,
+        delora_index:int,
+    ):
+        """Change the running_mode from unmerged to delora"""
+        assert (self.running_mode == "unmerged" and self.backbone_lora_index == None and self.de_lora_index == None)
+        ## TODO hqf: modify base layer
+        self.base_layer.weight.data = torch.add(self.base_layer.weight.data, self.lora_a_stacked[delora_index,]) 
+        self.running_mode = "delora"
+        self.backbone_lora_index = delora_index
+        self.de_lora_index = delora_index
+
+    
+
+    def delora_to_unmerged(
+        self,
+        delora_index:int,
+    ):
+        """Change the running_mode from delora to unmerged"""
+        assert( self.running_mode == "delora" and self.backbone_lora_index != None and self.backbone_lora_index == self.de_lora_index)
+        ## TODO hqf modify base layer
+        self.running_mode = "delora"
+        self.backbone_lora_index = None
+        self.delora_index = None        
+    
+    def delora_to_merged(
+        self,
+        delora_index:int,
+    ):
+        """Change the running_mode from delora to merged"""
+        assert (self.running_mode == "delora" and self.backbone_lora_index != None and self.backbone_lora_index == self.de_lora_index )
+        self.running_mode = "merged"
+        self.de_lora_index = None
+    
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         added_tokens_mask = x > self.base_layer.org_vocab_size - 1
         indices = self.embeddings_indices[1][:self.indices_len[3]].view_as(x)
@@ -331,6 +419,7 @@ class LoRAColumnParallelLinear(LoRALayer):
     def __init__(self, base_layer: ColumnParallelLinear) -> None:
         super().__init__()
         self.base_layer = base_layer
+        self.running_mode = "unmerged"
 
     def create_lora_weights(
             self,
@@ -353,7 +442,8 @@ class LoRAColumnParallelLinear(LoRALayer):
             dtype=lora_config.lora_dtype,
             device=self.base_layer.weight.device,
         )
-
+        self.de_lora_index = None              # if no de-lora , index = -1
+        self.backbone_lora_index = None
         self.indices: Optional[torch.Tensor] = None
         self.indices_len: Optional[List[int]] = None
         self.output_dim = self.lora_b_stacked.shape[1]
@@ -388,7 +478,7 @@ class LoRAColumnParallelLinear(LoRALayer):
     ):
         self.indices = base_indices
         self.indices_len = indices_len
-
+    # apply_weights is doing the backbone + lora_side_way computation with backbone first and sequentially all loras --hqf
     def apply_weights(self, x: torch.Tensor,
                       bias: Optional[torch.Tensor]) -> torch.Tensor:
         output = self.base_layer.linear_method.apply_weights(
@@ -401,6 +491,54 @@ class LoRAColumnParallelLinear(LoRALayer):
             output,
         )
         return output
+    
+    def merged_to_delora(
+        self,
+        delora_index:int,
+    ):
+        """Change the running_mode from merged to delora"""
+
+        assert (self.running_mode == "merged")
+        assert (self.de_lora_index == None)
+        assert (self.backbone_lora_index != None)
+        assert (self.backbone_lora_index == delora_index)
+        self.running_mode = "delora"
+        self.de_lora_index = delora_index
+        
+
+    def unmerged_to_delora(
+        self,
+        delora_index:int,
+    ):
+        """Change the running_mode from unmerged to delora"""
+        assert (self.running_mode == "unmerged" and self.backbone_lora_index == None and self.de_lora_index == None)
+        ## TODO hqf: modify base layer
+        self.base_layer.weight.data = torch.add(self.base_layer.weight.data, torch.mul(self.lora_a_stacked[delora_index],self.lora_b_stacked) ) 
+        self.running_mode = "delora"
+        self.backbone_lora_index = delora_index
+        self.de_lora_index = delora_index
+
+    
+
+    def delora_to_unmerged(
+        self,
+        delora_index:int,
+    ):
+        """Change the running_mode from delora to unmerged"""
+        assert( self.running_mode == "delora" and self.backbone_lora_index != None and self.backbone_lora_index == self.de_lora_index)
+        ## TODO hqf modify base layer
+        self.running_mode = "delora"
+        self.backbone_lora_index = None
+        self.delora_index = None        
+    
+    def delora_to_merged(
+        self,
+        delora_index:int,
+    ):
+        """Change the running_mode from delora to merged"""
+        assert (self.running_mode == "delora" and self.backbone_lora_index != None and self.backbone_lora_index == self.de_lora_index )
+        self.running_mode = "merged"
+        self.de_lora_index = None
 
     def forward(self, input_):
         """Forward of ColumnParallelLinear
@@ -442,6 +580,7 @@ class LoRAMergedColumnParallelLinear2Slice(LoRAColumnParallelLinear):
 
     def __init__(self, base_layer: MergedColumnParallelLinear) -> None:
         super().__init__(base_layer)
+        self.running_mode = "merged"
 
     def create_lora_weights(
             self,
@@ -478,6 +617,7 @@ class LoRAMergedColumnParallelLinear2Slice(LoRAColumnParallelLinear):
 
         self.indices: Optional[torch.Tensor] = None
         self.output_dim = self.lora_b_stacked[0].shape[2]
+        self.de_lora_index = -1
 
     def reset_lora(self, index: int):
         self.lora_a_stacked[0][index] = 0
@@ -546,6 +686,7 @@ class LoRAQKVParallelLinear(LoRAColumnParallelLinear):
 
     def __init__(self, base_layer: QKVParallelLinear) -> None:
         super().__init__(base_layer)
+        self.running_mode = "merged"
 
     def create_lora_weights(
             self,
@@ -615,6 +756,7 @@ class LoRAQKVParallelLinear(LoRAColumnParallelLinear):
         self.packed_indices: Optional[torch.Tensor] = None
         self.standard_indices: Optional[torch.Tensor] = None
         self.indices_len: Optional[List[int]] = None
+        self.de_lora_index = -1
 
     def reset_lora(self, index: int):
         self.lora_a_stacked[0][index] = 0
@@ -702,6 +844,7 @@ class LoRARowParallelLinear(LoRALayer):
     def __init__(self, base_layer: RowParallelLinear) -> None:
         super().__init__()
         self.base_layer = base_layer
+        self.running_mode = "merged"
 
     def create_lora_weights(
             self,
@@ -728,6 +871,9 @@ class LoRARowParallelLinear(LoRALayer):
             dtype=lora_config.lora_dtype,
             device=self.base_layer.weight.device,
         )
+        # begin -hqf
+        self.de_lora_index = -1 
+        # end - hqf
         self.indices: Optional[torch.Tensor] = None
         self.indices_len: Optional[List[int]] = None
 
@@ -837,6 +983,7 @@ class LoRASampler(LoRALayer):
         self.hidden_size = hidden_size
         self.dtype = dtype
         self.device = device
+        self.running_mode = "merged"
 
     @property
     def vocab_size(self):
@@ -885,6 +1032,7 @@ class LoRASampler(LoRALayer):
         self.indices = None
         self.indices_padded = None
         self.indices_len = None
+        self.de_lora_index = -1 
 
     def reset_lora(self, index: int):
         self.lora_a_stacked[index] = 0

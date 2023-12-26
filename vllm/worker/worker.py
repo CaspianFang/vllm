@@ -21,6 +21,8 @@ from vllm.lora.worker_manager import (
     LRUCacheWorkerLoRAManager,
 )
 from vllm.lora.layers import LoRAMapping
+from collections import Counter # hqf
+
 
 LORA_WARMUP_RANK = 8
 
@@ -58,6 +60,7 @@ class Worker:
         self.cache_events = None
         self.gpu_cache = None
         self.lora_manager = None
+        self.lora_run_mode = None #  define the running mode of this worker if lora is enabled , str , [merged , unmerged , de-lora] - hqf
 
     def init_model(self):
         # This env var set by Ray causes exceptions with graph building.
@@ -90,7 +93,7 @@ class Worker:
                 self.scheduler_config.max_num_seqs,
                 self.scheduler_config.max_num_batched_tokens, vocab_size,
                 self.lora_config, self.device)
-            self.model = self.lora_manager.create_lora_adapter(self.model)
+            self.model = self.lora_manager.create_lora_adapter(self.model)    # if use lora, submodule in self.model is partly replaced by LoRAlayer - hqf
         else:
             self.lora_manager = DisabledWorkerLoRAManager(
                 self.scheduler_config.max_num_seqs,
@@ -208,7 +211,7 @@ class Worker:
         self,
         seq_group_metadata_list: List[SequenceGroupMetadata],
     ) -> Tuple[torch.Tensor, torch.Tensor, InputMetadata, LoRAMapping,
-               Set[LoRARequest]]:
+               Set[LoRARequest],Counter]:
         seq_groups: List[Tuple[List[int], SamplingParams]] = []
         input_tokens: List[List[int]] = []
         input_positions: List[List[int]] = []
@@ -220,6 +223,7 @@ class Worker:
         lora_requests: Set[LoRARequest] = set()
         lora_index_mapping: List[int] = []
         lora_prompt_mapping: List[int] = []
+        lora_token_counting : Counter = Counter()
 
         # Add prompt tokens.
         prompt_lens: List[int] = []
@@ -256,8 +260,9 @@ class Worker:
                 # for_warmup is true, we add the lora lora mapping that is used
                 # during generation.
                 lora_requests.add(seq_group_metadata.lora_request)
-            lora_index_mapping.append([lora_id] * prompt_len)
-            lora_prompt_mapping.append(lora_id)
+            lora_index_mapping.append([lora_id] * prompt_len) # lora_index_maping is token level mapping , one token one lora -hqf
+            lora_prompt_mapping.append(lora_id)  # lora_prompt_mapping is prompt level mapping, one prompt one lora -hqf 
+            lora_token_counting.update([lora_id]*prompt_len)   # use prompt count since padding ?? -hqf
 
             input_tokens.append(prompt_tokens)
             # NOTE(woosuk): Here we assume that the first token in the prompt
@@ -328,7 +333,8 @@ class Worker:
                 if self.sliding_window is not None:
                     context_len = min(context_len, self.sliding_window)
                 input_positions.append([position])
-                lora_index_mapping.append([lora_id])
+                lora_index_mapping.append([lora_id]) # for seqs not prompt , only feed in one token -hqf
+                lora_token_counting.update([lora_id])
 
                 block_table = seq_group_metadata.block_tables[seq_id]
 
@@ -349,9 +355,9 @@ class Worker:
                 generation_block_tables.append(block_table)
 
                 # Update LoRA mapping.
-                if lora_id > 0:
-                    lora_requests.add(seq_group_metadata.lora_request)
-                lora_prompt_mapping.append(lora_id)
+                if lora_id > 0:   ## lora_id = 0 is for padding
+                    lora_requests.add(seq_group_metadata.lora_request)  # lora_request is a set with non-repeated lora_reqs -hqf
+                lora_prompt_mapping.append(lora_id)   ## here is a little tricky , seqs not prompt also add lora in lora_prompt_mapping -hqf
 
         padded_input_tokens = [
             _pad_to_max(tokens, max_seq_len, pad=0) for tokens in input_tokens
@@ -361,7 +367,7 @@ class Worker:
             for positions in input_positions
         ]
         padded_lora_input_mapping = [
-            _pad_to_max(mapping, max_seq_len, pad=0)
+            _pad_to_max(mapping, max_seq_len, pad=0)   # padding loras , so lora_id = 0 means no lora should be applied ! - hqf
             for mapping in lora_index_mapping
         ]
         padded_slot_mapping = [
@@ -421,7 +427,7 @@ class Worker:
             categorized_sample_indices=categorized_sample_indices,
             sliding_window=self.sliding_window,
         )
-        return tokens_tensor, positions_tensor, input_metadata, lora_mapping, lora_requests
+        return tokens_tensor, positions_tensor, input_metadata, lora_mapping, lora_requests,lora_token_counting
 
     @torch.inference_mode()
     def execute_model(
@@ -459,15 +465,18 @@ class Worker:
             input_metadata,
             lora_mapping,
             lora_requests,
+            lora_counter,
         ) = self._prepare_inputs(seq_group_metadata_list)
+        
 
         if self.lora_config:
             lora_requests = [
                 seq_group_metadata.lora_request
                 for seq_group_metadata in seq_group_metadata_list
-            ]
-            self.apply_loras(lora_requests, lora_mapping)
-
+            ]  # a little bit weird  - hqf , why not use the result given by prepare_input , not a list
+            self.schedule_lora(lora_requests,lora_counter,lora_mapping)
+            #self.apply_loras(lora_requests, lora_mapping)
+            
         # Execute the model.
         output = self.model(
             input_ids=input_tokens,
@@ -477,7 +486,10 @@ class Worker:
             cache_events=cache_events,
         )
         return output
-
+    # change the loras in manager according to the information in batch 
+    def schedule_lora( self,lora_requests:List[LoRARequest],
+                      lora_counter:Counter,lora_mapping) -> None:
+        self.lora_manager.schedule_modes(lora_requests, lora_counter, lora_mapping)
     def apply_loras(self, lora_requests: List[LoRARequest],
                     lora_mapping: LoRAMapping) -> None:
         self.lora_manager.apply_loras(lora_requests, lora_mapping)

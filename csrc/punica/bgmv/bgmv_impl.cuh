@@ -147,11 +147,11 @@ template <int feat_in, int feat_out, size_t vec_size, int tx, int ty, int tz,
 __global__ void
 bgmv_expand_kernel(out_T *__restrict__ Y, const in_T *__restrict__ X,
                    const W_T *__restrict__ W,
-                   const int64_t *__restrict__ indicies, int64_t y_offset,
+                   const int64_t *__restrict__ in dicies, int64_t y_offset,
                    int64_t full_y_size, int64_t num_layers, int64_t layer_idx,
                    float scale) {
   size_t batch_idx = blockIdx.y;
-  int64_t idx = indicies[batch_idx] * num_layers + layer_idx;
+  int64_t idx = indicies[batch_idx] * num_layers + layer_idx;   
 
   if (idx < 0) {
     return;
@@ -187,7 +187,6 @@ bgmv_expand_kernel(out_T *__restrict__ Y, const in_T *__restrict__ X,
       threadIdx.z * ty + threadIdx.y] += static_cast<out_T>(sum);
   }
 }
-
 template <int feat_in, int feat_out, typename in_T, typename out_T,
           typename W_T>
 void bgmv_kernel(out_T *__restrict__ Y, const in_T *__restrict__ X,

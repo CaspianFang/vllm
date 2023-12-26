@@ -1,7 +1,7 @@
 import logging
 from abc import ABC, abstractmethod, abstractproperty
 from typing import Any, List, Optional, Set, Type, Union
-
+from collections import Counter
 import torch
 
 from vllm.lora.models import (TARGET_MODULES_QKV, LoRAModel, LoRAModelManager,
@@ -118,6 +118,7 @@ class WorkerLoRAManager(AbstractWorkerLoRAManager):
         self._lora_model_cls = lora_model_cls
         super().__init__(max_num_seqs, max_num_batched_tokens, vocab_size,
                          lora_config, device)
+        self.ite_lora_reqs = None
 
     @property
     def is_enabled(self) -> bool:
@@ -162,12 +163,12 @@ class WorkerLoRAManager(AbstractWorkerLoRAManager):
         loras_to_remove = loras_that_exist - new_loras
 
         for lora_id in loras_to_remove:
-            self.remove_lora(lora_id)
+            self.remove_lora(lora_id)   # here remove_lora is  simply put index_id dict to None, didn't unload the weight -hqf
 
         for lora_id in loras_to_add:
-            self.add_lora(loras_map[lora_id])
+            self.add_lora(loras_map[lora_id]) # 
 
-    def _load_lora(self, lora_request: LoRARequest) -> LoRAModel:
+    def _load_lora(self, lora_request: LoRARequest) -> LoRAModel:  ## lora lora weight to cpu - hqf
         try:
             lora = self._lora_model_cls.from_local_checkpoint(
                 lora_request.lora_local_path,
@@ -209,6 +210,45 @@ class WorkerLoRAManager(AbstractWorkerLoRAManager):
 
     def list_loras(self) -> Set[int]:
         return set(self._lora_manager.list_loras())
+    def schedule_modes(self,lora_requests:List[LoRARequest],
+                      lora_counter:Counter,lora_mapping:LoRAMapping) -> None:
+        most_common_count = lora_counter.most_common(1)[0][1]
+        most_common_lora_id = lora_counter.most_common(1)[0][0]
+        total_count = sum(lora_counter.values())
+        change_to_delora = most_common_count > 0.5 * total_count
+        if ( self._lora_manager.now_backbone_lora and  self._lora_manager.now_delora) : ##  these condition can't make sure all layers are delora, but at least one layer
+            mode = "de-lora"
+        elif (self._lora_manager.now_backbone_lora and (not self._lora_manager.now_delora) ): ## all layers are merged
+            mode = "merged" 
+        else:
+            mode = "unmerged"                            ## all layers are unmerged
+        new_loras = Set(lora_mapping.index_mapping)
+        lora_num = len(new_loras)
+        if mode == "merged":
+            if (self.list_loras() != new_loras):
+                # add backbone lora hqf 
+                lora_requests.append(self.ite_lora_reqs.get(self._lora_manager.now_backbone_lora))
+                self.apply_loras(lora_requests,lora_mapping)
+                self._lora_manager.merged_to_delora_all(self._lora_manager.now_backbone_lora)
+        elif mode == "unmerged":
+            self.apply_loras(lora_requests,lora_mapping)
+            if (change_to_delora):
+                self._lora_manager.unmerged_to_delora_one(most_common_lora_id)
+        else :
+            if (change_to_delora):    
+                if ( self._lora_manager.now_delora == most_common_lora_id ):            #  new_delora = old delora
+                    self.apply_loras(lora_requests,lora_mapping)
+                    all_delora = self._lora_manager.unmerged_to_delora_one( most_common_lora_id )
+                    if (all_delora and lora_num == 1):
+                        self._lora_manager.delora_to_merged_all(most_common_lora_id)
+                else :
+                    # should add now_backbone_lora hqf
+                    lora_requests.append(self.ite_lora_reqs.get(self._lora_manager.now_backbone_lora))
+                    self.apply_loras(lora_requests,lora_mapping)
+                    self._lora_manager.delora_to_unmerged_one()      
+            else :
+                self._lora_manager.delora_to_unmerged_one()
+        self.ite_lora_reqs = dict([{req.lora_int_id,req} for req in lora_requests])
 
 
 class LRUCacheWorkerLoRAManager(WorkerLoRAManager):
