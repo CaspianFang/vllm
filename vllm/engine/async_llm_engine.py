@@ -1,5 +1,6 @@
 import asyncio
 import time
+import torch
 from functools import partial
 from typing import (Any, Dict, Iterable, List, Optional, Set, Tuple, Type,
                     Union, AsyncIterator)
@@ -13,7 +14,11 @@ from vllm.logger import init_logger
 from vllm.outputs import RequestOutput
 from vllm.sampling_params import SamplingParams
 
+from vllm.sequence import SequenceGroup
+
 logger = init_logger(__name__)
+
+KVCache = Tuple[torch.Tensor, torch.Tensor]
 
 
 class AsyncEngineDeadError(RuntimeError):
@@ -68,6 +73,14 @@ class AsyncStream:
         if isinstance(result, Exception):
             raise result
         return result
+    
+class AsyncStreamMetaData:
+    def __init__(self, stream):
+        self.request_id = stream.request_id
+        self.finished = stream.finished
+        self.request_outputs = []
+        while not stream._queue.empty():
+            self.request_outputs.append(stream._queue.get_nowait())
 
 
 class RequestTracker:
@@ -75,9 +88,11 @@ class RequestTracker:
 
     def __init__(self) -> None:
         self._request_streams: Dict[str, AsyncStream] = {}
+        self.request_blocks: Dict[str, Dict[int, int]] = {}    # to record the blocks of each request
         self._finished_requests: asyncio.Queue[str] = asyncio.Queue()
         self._new_requests: asyncio.Queue[Tuple[AsyncStream,
                                                 dict]] = asyncio.Queue()
+        self._migrate_out: asyncio.Queue[str] = asyncio.Queue()
         self.new_requests_event = None
 
     def __contains__(self, item):
@@ -140,6 +155,19 @@ class RequestTracker:
             return
 
         self._request_streams[request_id].finish()
+        
+    def greedy_abort_request(self, request_id: str):
+        """This function is designed for request migration, synchronous.
+        
+        Abort requests
+        
+        """
+        self._migrate_out.put_nowait(request_id)
+        if request_id not in self._request_streams or self._request_streams[
+                request_id].finished:
+            # The request has already finished or been aborted.
+            logger.info(f"Request {request_id} has already finished or been aborted.")
+            return
 
     def get_new_and_finished_requests(self) -> Tuple[List[Dict], Set[str]]:
         """Get the new requests and finished requests to be
@@ -165,6 +193,17 @@ class RequestTracker:
 
         return new_requests, finished_requests
 
+    def get_migrate_out_requests(self) -> Tuple[Set[str], List[AsyncStream]]:
+        migrate_out_requests: Set[str] = set()
+        streams_to_remove: List[AsyncStream] = []
+        while not self._migrate_out.empty():
+            request_id = self._migrate_out.get_nowait() # get from the pipeline
+            migrate_out_requests.add(request_id)
+            
+            stream = self._request_streams.pop(request_id, None)
+            streams_to_remove.append(stream)
+        return migrate_out_requests, streams_to_remove
+    
     async def wait_for_new_requests(self):
         await self.new_requests_event.wait()
 
@@ -201,6 +240,12 @@ class _AsyncLLMEngine(LLMEngine):
             output = []
 
         return self._process_model_outputs(output, scheduler_outputs)
+    
+    async def get_gpu_caches_async(self, blocks_gpu_to_cpu: Dict[str, Dict[int, int]]):
+        return await self._run_workers_async(
+            "get_gpu_caches",
+            blocks_gpu_to_cpu=blocks_gpu_to_cpu,
+        )
 
     async def encode_request_async(
         self,
@@ -276,6 +321,18 @@ class _AsyncLLMEngine(LLMEngine):
         all_outputs = await asyncio.gather(*coros)
         return all_outputs
 
+class MigrateResource:
+    def __init__(self,
+                 request_id: str,
+                 blocks: Dict[int, int],
+                 seq_group: SequenceGroup,
+                 kv_cache: List[KVCache],
+                 stream) -> None:
+        self.request_id = request_id
+        self.blocks = blocks
+        self.seq_group = seq_group
+        self.kv_cache = kv_cache
+        self.stream_meta_data = AsyncStreamMetaData(stream)
 
 class AsyncLLMEngine:
     """An asynchronous wrapper for LLMEngine.
@@ -325,6 +382,8 @@ class AsyncLLMEngine:
         self._background_loop_unshielded = None
         self.start_engine_loop = start_engine_loop
         self._request_tracker = RequestTracker()
+        self._migrate_out_queue = asyncio.Queue()
+        self._migrate_in_queue = asyncio.Queue()
 
     @property
     def is_running(self) -> bool:
@@ -362,6 +421,58 @@ class AsyncLLMEngine:
             engine_class = ray.remote(num_gpus=num_gpus)(
                 self._engine_class).remote
         return engine_class(*args, **kwargs)
+    
+    async def put_resource(self, resource, flag: int):
+        if flag == 0:
+            self._migrate_out_queue.put_nowait(resource)
+        else:
+            self._migrate_in_queue.put_nowait(resource)
+            
+    async def get_resource(self, flag: int):
+        if flag == 0:
+            return await self._migrate_out_queue.get()
+        else:
+            return await self._migrate_in_queue.get()
+    
+    async def before_engine_step(self):
+        """before engine_step, check whether there are requests to migrate out.
+        
+        """
+        # migrate in logic
+        while not self._migrate_in_queue.empty():
+            # now we will resume the resources
+            print("Get resources!")
+            single_resource: MigrateResource = await self.get_resource(flag=1)
+            
+        
+        
+        # migrate out check logic
+        migrate_out_requests, streams = self._request_tracker.get_migrate_out_requests()
+        
+        self._request_tracker.request_blocks = await self._engine_update_blocks(self._request_tracker._request_streams.keys())
+        # print(self._request_tracker.request_blocks) # we just get the blocks info every step(), and we will schedule it sooner or later
+        
+        
+        if migrate_out_requests:
+            # get blocks to migrate out
+            blocks_migrated_out, requests_seq_groups = await self._engine_abort_greedy(migrate_out_requests)
+            # get gpu caches according to `blocks_migrated_out`
+            requests_gpu_caches: Dict[str, List[KVCache]] = await self.engine.get_gpu_caches_async(blocks_migrated_out)
+            
+            # make resources and put into pipeline
+            for request_id in migrate_out_requests:
+                blocks = blocks_migrated_out[request_id]
+                seq_group = requests_seq_groups[request_id]
+                kv_cache = requests_gpu_caches[request_id]
+                stream = streams.pop(0)
+                
+                resource = MigrateResource(request_id, blocks, seq_group, kv_cache, stream)
+                
+                await self.put_resource(resource, 0)
+                logger.info("I have put one resource.")
+            
+            
+        return len(migrate_out_requests) > 0
 
     async def engine_step(self) -> bool:
         """Kick the engine to process the waiting requests.
@@ -399,6 +510,13 @@ class AsyncLLMEngine:
             await self.engine.abort_request.remote(request_ids)
         else:
             self.engine.abort_request(request_ids)
+            
+    async def _engine_abort_greedy(self, request_ids: Iterable[str]) -> Tuple[Dict[str, Dict[int, int]],
+                                                                              Dict[str, SequenceGroup]]:
+        return self.engine.abort_request_greedy(request_ids)
+    
+    async def _engine_update_blocks(self, request_id: Iterable[str]):
+        return self.engine.update_blocks(request_id)
 
     async def run_engine_loop(self):
         # Initialize the RequestTracker here so it uses the right event loop.
@@ -406,6 +524,8 @@ class AsyncLLMEngine:
         while True:
             if not has_requests_in_progress:
                 await self._request_tracker.wait_for_new_requests()
+                
+            has_requests_migrate_out = await self.before_engine_step()
             has_requests_in_progress = await self.engine_step()
             await asyncio.sleep(0)
 
@@ -592,6 +712,24 @@ class AsyncLLMEngine:
         """
         self._request_tracker.abort_request(request_id,
                                             verbose=self.log_requests)
+        
+    async def greedy_abort(self, request_id: str):
+        """This function is designed for request migration, synchronous.
+        Abort a request, and return its SequenceGroup data, and KVCaches.
+        """
+        if not self.is_running:
+            raise AsyncEngineDeadError(
+                "Background loop is not running. If it was running, "
+                "inspect the output to find the stacktrace of the "
+                "error that caused the background loop to stop "
+                "(AsyncEngineDeadError).")
+        self._greedy_abort(request_id)
+        
+    def _greedy_abort(self, request_id: str):
+        self._request_tracker.greedy_abort_request(request_id)
+        
+    async def get_migrate_out_data():
+        pass
 
     async def get_model_config(self) -> ModelConfig:
         """Get the model configuration of the vLLM engine."""

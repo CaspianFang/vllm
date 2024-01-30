@@ -19,6 +19,14 @@ from vllm.worker.cache_engine import CacheEngine
 from vllm.worker.model_runner import ModelRunner
 from vllm.lora.request import LoRARequest
 
+import numpy as np
+
+from vllm.logger import init_logger
+
+logger = init_logger(__name__)
+
+blocks_counter = 0
+
 
 class Worker:
     """A worker class that executes (a partition of) the model on a GPU.
@@ -175,6 +183,11 @@ class Worker:
         if cache_events is not None:
             for event in cache_events:
                 event.wait()
+                
+    def get_gpu_caches(self, blocks_gpu_to_cpu: Dict[str, Dict[int, int]]):
+        # first get blocks in gpu logically
+        # secondly get tensor according to blocks
+        return self.cache_engine.get_gpu_caches(blocks_gpu_to_cpu)
 
     @torch.inference_mode()
     def execute_model(

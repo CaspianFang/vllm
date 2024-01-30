@@ -94,6 +94,9 @@ class LLMEngine:
         self.lora_config = lora_config
         self.parallel_config = parallel_config
         self.scheduler_config = scheduler_config
+        
+        self.scheduler_config.max_num_seqs = 32
+        
         self.log_stats = log_stats
         self._verify_args()
 
@@ -474,6 +477,20 @@ class LLMEngine:
             >>> engine.abort_request(request_id)
         """
         self.scheduler.abort_seq_group(request_id)
+        
+    def abort_request_greedy(self, request_id: Union[str, Iterable[str]]) -> Tuple[Dict[str, Dict[int, int]],
+                                                                                    Dict[str, SequenceGroup]]:
+        """Aborts a request(s) with the given ID.
+
+        Args:
+            request_id: The ID(s) of the request to abort.
+        """
+        return self.scheduler.abort_seq_group_greedy(request_id)
+    
+    def update_blocks(self, request_id: Union[str, Iterable[str]]) -> Dict[str, Dict[int, int]]:
+        """Updates the blocks of the requests.
+        """
+        return self.scheduler.query_request_blocks(request_id)
 
     def get_model_config(self) -> ModelConfig:
         """Gets the model configuration."""

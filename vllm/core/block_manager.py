@@ -263,6 +263,14 @@ class BlockSpaceManager:
             for cpu_block, gpu_block in mapping.items()
         }
         return block_number_mapping
+    
+        
+    # TODO: implement swap_in_running
+    def swap_in_running(self, seq_group: SequenceGroup) -> Dict[int, int]:
+        mapping: Dict[PhysicalTokenBlock, PhysicalTokenBlock] = {}
+        for seq in seq_group.get_seqs(status=SequenceStatus.RUNNING):
+            new_block_table: BlockTable = []
+            block_table = self.block_tables[seq.seq_id]
 
     def can_swap_out(self, seq_group: SequenceGroup) -> bool:
         blocks = self._get_physical_blocks(seq_group)

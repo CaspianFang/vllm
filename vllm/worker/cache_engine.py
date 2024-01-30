@@ -136,6 +136,33 @@ class CacheEngine:
 
     def swap_out(self, src_to_dst: Dict[int, int]) -> None:
         self._swap(self.gpu_cache, self.cpu_cache, src_to_dst)
+        
+    def get_gpu_caches(self, blocks_gpu_to_cpu: Dict[str, Dict[int, int]]) -> Dict[str, List[KVCache]]:
+        """
+        This function get the KV caches from GPU.
+        """
+        tensors_dict: Dict[str, List[KVCache]] = {}
+        
+        # iterate each request, extract the tensors
+        # FIXME: this is not efficient, we should use a batched version
+        for req_id, block_items in blocks_gpu_to_cpu.items():
+            block_idx = list(block_items.keys())    # gpu -> cpu mapping, we just need gpu idx
+            req_kv_cache: List[KVCache] = []
+            
+            # iterate each layer
+            for layer_idx in range(self.num_layers):
+                gpu_key_cache, gpu_value_cache = self.gpu_cache[layer_idx]
+                
+                k_cache = gpu_key_cache[block_idx]
+                v_cache = gpu_value_cache[block_idx]
+                # logger.info(f"Request {req_id} layer {layer_idx} key cache shape: {k_cache.shape}, value cache shape: {v_cache.shape}")
+                req_kv_cache.append((k_cache, v_cache))
+                # TODO: I don't know if further processing of original tensors is needed
+                
+            tensors_dict[req_id] = req_kv_cache
+            
+        assert len(tensors_dict) == len(blocks_gpu_to_cpu)
+        return tensors_dict
 
     def copy(self, src_to_dsts: Dict[int, List[int]]) -> None:
         key_caches = [key_cache for key_cache, _ in self.gpu_cache]

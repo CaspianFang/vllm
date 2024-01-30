@@ -150,6 +150,52 @@ class Scheduler:
                         continue
                     seq.status = SequenceStatus.FINISHED_ABORTED
                     self.free_seq(seq)
+                    
+    def abort_seq_group_greedy(self, request_id: Union[str, Iterable[str]]) -> Tuple[Dict[str, Dict[int, int]],
+                                                                                      Dict[str, SequenceGroup]]:
+        blocks_to_swap_out: Dict[str, Dict[int, int]] = {}
+        request_seq_groups: Dict[str, SequenceGroup] = {}
+        
+        if isinstance(request_id, str):
+            request_id = (request_id, )
+        request_ids = set(request_id)
+        for state_queue in [self.waiting, self.running, self.swapped]:
+            # We need to reverse the list as we are removing elements
+            # from it as we iterate over it. If we don't do it,
+            # indices will get messed up and we will skip over elements.
+            for seq_group in reversed(state_queue):
+                if seq_group.request_id in request_ids:
+                    blocks_to_swap_out[seq_group.request_id] = {}
+                    # Remove the sequence group from the state queue.
+                    state_queue.remove(seq_group)   # remove from any queue 
+
+                    tmp_blocks_dict: Dict[int, int] = {}
+                    # The key idea here is to swap out and free the space, because we will not use it anymore.
+                    self._migrate_out(seq_group, tmp_blocks_dict)
+                    
+                    request_ids.remove(seq_group.request_id)
+                    blocks_to_swap_out[seq_group.request_id] = tmp_blocks_dict
+                    request_seq_groups[seq_group.request_id] = seq_group
+                    if not request_ids:
+                        return blocks_to_swap_out, request_seq_groups
+                    
+    def query_request_blocks(self, request_id: Union[str, Iterable[str]]) -> Dict[str, Dict[int, int]]:
+        blocks_of_requests: Dict[str, Dict[int, int]] = {}
+        
+        if isinstance(request_id, str):
+            request_id = (request_id, )
+        request_ids = set(request_id)
+        
+        for state_queue in [self.waiting, self.running, self.swapped]:
+            for seq_group in state_queue:
+                if seq_group.request_id in request_ids:
+                    blocks_of_requests[seq_group.request_id] = {}
+                    for seq in seq_group.get_seqs():
+                        blocks_of_requests[seq_group.request_id][seq.seq_id] = self.block_manager.get_block_table(seq)
+                    request_ids.remove(seq_group.request_id)
+                    if not request_ids:
+                        return blocks_of_requests
+        
 
     def has_unfinished_seqs(self) -> bool:
         return self.waiting or self.running or self.swapped
@@ -492,3 +538,12 @@ class Scheduler:
         blocks_to_swap_out.update(mapping)
         for seq in seq_group.get_seqs(status=SequenceStatus.RUNNING):
             seq.status = SequenceStatus.SWAPPED
+
+    def _migrate_out(self, seq_group, blocks_to_swap_out):
+        if not self.block_manager.can_swap_out(seq_group):
+            raise RuntimeError(
+                "Aborted due to the lack of CPU swap space. Please increase "
+                "the swap space to avoid this error.")
+        mapping = self.block_manager.swap_out(seq_group)
+        blocks_to_swap_out.update(mapping)
+        # here we do nothing instead of changing the status
