@@ -92,7 +92,8 @@ class RequestTracker:
         self._finished_requests: asyncio.Queue[str] = asyncio.Queue()
         self._new_requests: asyncio.Queue[Tuple[AsyncStream,
                                                 dict]] = asyncio.Queue()
-        self._migrate_out: asyncio.Queue[str] = asyncio.Queue()
+        self._migrate_out: asyncio.Queue[str] = asyncio.Queue() # to record the requests to migrate out
+        self._migrate_in: asyncio.Queue[str] = asyncio.Queue() # to record the requests to migrate in
         self.new_requests_event = None
 
     def __contains__(self, item):
@@ -141,6 +142,9 @@ class RequestTracker:
         self.new_requests_event.set()
 
         return stream
+    
+    def greedy_add_request(self, request_id: str):
+        pass    # Samurai 03-08 here
 
     def abort_request(self, request_id: str, *, verbose: bool = False) -> None:
         """Abort a request during next background loop iteration."""
@@ -156,18 +160,23 @@ class RequestTracker:
 
         self._request_streams[request_id].finish()
         
-    def greedy_abort_request(self, request_id: str):
+    def greedy_abort_request(self, request_id: str) -> bool:
         """This function is designed for request migration, synchronous.
         
         Abort requests
         
+        return the success status of this action
+        
         """
-        self._migrate_out.put_nowait(request_id)
         if request_id not in self._request_streams or self._request_streams[
                 request_id].finished:
             # The request has already finished or been aborted.
             logger.info(f"Request {request_id} has already finished or been aborted.")
-            return
+            return False
+        else:
+            self._migrate_out.put_nowait(request_id)
+            return True
+            
 
     def get_new_and_finished_requests(self) -> Tuple[List[Dict], Set[str]]:
         """Get the new requests and finished requests to be
@@ -242,10 +251,11 @@ class _AsyncLLMEngine(LLMEngine):
         return self._process_model_outputs(output, scheduler_outputs)
     
     async def get_gpu_caches_async(self, blocks_gpu_to_cpu: Dict[str, Dict[int, int]]):
-        return await self._run_workers_async(
+        result = await self._run_workers_async(
             "get_gpu_caches",
             blocks_gpu_to_cpu=blocks_gpu_to_cpu,
         )
+        return result
 
     async def encode_request_async(
         self,
@@ -424,8 +434,10 @@ class AsyncLLMEngine:
     
     async def put_resource(self, resource, flag: int):
         if flag == 0:
+            # here we will migrate resource out of this instance
             self._migrate_out_queue.put_nowait(resource)
         else:
+            # here we will migrate resource into this instance, flags == 1
             self._migrate_in_queue.put_nowait(resource)
             
     async def get_resource(self, flag: int):
@@ -433,6 +445,14 @@ class AsyncLLMEngine:
             return await self._migrate_out_queue.get()
         else:
             return await self._migrate_in_queue.get()
+        
+    async def recover_request(self, request_id, blocks, seq_group, kv_cache, stream_meta_data):
+        # first we recover stream meta data, a new request_id will be assigned by the task pool
+        # or scheduler.
+        new_stream = AsyncStream(request_id)
+        while len(stream_meta_data.request_outputs) > 0:
+            new_stream.put(stream_meta_data.request_outputs.pop(0))
+        
     
     async def before_engine_step(self):
         """before engine_step, check whether there are requests to migrate out.
@@ -444,6 +464,12 @@ class AsyncLLMEngine:
             print("Get resources!")
             single_resource: MigrateResource = await self.get_resource(flag=1)
             
+            # resume the resources
+            req_id = single_resource.request_id
+            req_blocks = single_resource.blocks
+            req_seq_group = single_resource.seq_group
+            req_kv_cache = single_resource.kv_cache
+            req_stream = single_resource.stream_meta_data
         
         
         # migrate out check logic
@@ -457,7 +483,8 @@ class AsyncLLMEngine:
             # get blocks to migrate out
             blocks_migrated_out, requests_seq_groups = await self._engine_abort_greedy(migrate_out_requests)
             # get gpu caches according to `blocks_migrated_out`
-            requests_gpu_caches: Dict[str, List[KVCache]] = await self.engine.get_gpu_caches_async(blocks_migrated_out)
+            async_result = await self.engine.get_gpu_caches_async(blocks_migrated_out)
+            requests_gpu_caches: Dict[str, List[KVCache]] = async_result[0]
             
             # make resources and put into pipeline
             for request_id in migrate_out_requests:
@@ -524,7 +551,7 @@ class AsyncLLMEngine:
         while True:
             if not has_requests_in_progress:
                 await self._request_tracker.wait_for_new_requests()
-                
+
             has_requests_migrate_out = await self.before_engine_step()
             has_requests_in_progress = await self.engine_step()
             await asyncio.sleep(0)
@@ -713,7 +740,7 @@ class AsyncLLMEngine:
         self._request_tracker.abort_request(request_id,
                                             verbose=self.log_requests)
         
-    async def greedy_abort(self, request_id: str):
+    async def greedy_abort(self, request_id: str) -> bool:
         """This function is designed for request migration, synchronous.
         Abort a request, and return its SequenceGroup data, and KVCaches.
         """
@@ -723,10 +750,10 @@ class AsyncLLMEngine:
                 "inspect the output to find the stacktrace of the "
                 "error that caused the background loop to stop "
                 "(AsyncEngineDeadError).")
-        self._greedy_abort(request_id)
+        return self._greedy_abort(request_id)
         
-    def _greedy_abort(self, request_id: str):
-        self._request_tracker.greedy_abort_request(request_id)
+    def _greedy_abort(self, request_id: str) -> bool:
+        return self._request_tracker.greedy_abort_request(request_id)
         
     async def get_migrate_out_data():
         pass

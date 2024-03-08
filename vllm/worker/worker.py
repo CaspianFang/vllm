@@ -187,7 +187,8 @@ class Worker:
     def get_gpu_caches(self, blocks_gpu_to_cpu: Dict[str, Dict[int, int]]):
         # first get blocks in gpu logically
         # secondly get tensor according to blocks
-        return self.cache_engine.get_gpu_caches(blocks_gpu_to_cpu)
+        dicts = self.cache_engine.get_gpu_caches(blocks_gpu_to_cpu)
+        return dicts
 
     @torch.inference_mode()
     def execute_model(
