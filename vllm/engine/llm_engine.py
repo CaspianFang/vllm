@@ -5,7 +5,7 @@ import time
 from typing import (TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Tuple,
                     Union)
 
-from vllm.lora.request import LoRARequest
+from vllm.lora.request import LoRARequest, OLoRARequest
 from vllm.config import (CacheConfig, ModelConfig, ParallelConfig,
                          SchedulerConfig, LoRAConfig)
 from vllm.core.scheduler import Scheduler, SchedulerOutputs
@@ -374,6 +374,20 @@ class LLMEngine:
                                                      prompt=prompt,
                                                      lora_request=lora_request)
         return prompt_token_ids
+    
+    def encode_olora_request(
+        self,
+        request_id: str,  # pylint: disable=unused-argument
+        prompt: Optional[str],
+        prompt_token_ids: Optional[List[int]] = None,
+        olora_request: Optional[OLoRARequest] = None,
+    ):
+        if prompt_token_ids is None:
+            assert prompt is not None
+            prompt_token_ids = self.tokenizer.encode(request_id=request_id,
+                                                     prompt=prompt,
+                                                     olora_request=olora_request)
+        return prompt_token_ids
 
     def add_request(
         self,
@@ -436,6 +450,45 @@ class LLMEngine:
         if arrival_time is None:
             arrival_time = time.monotonic()
         prompt_token_ids = self.encode_request(
+            request_id=request_id,
+            prompt=prompt,
+            prompt_token_ids=prompt_token_ids,
+            lora_request=lora_request)
+
+        # Create the sequences.
+        block_size = self.cache_config.block_size
+        seq_id = next(self.seq_counter)
+        seq = Sequence(seq_id, prompt, prompt_token_ids, block_size,
+                       lora_request)
+
+        # Check whether the input specifies prefix
+        prefix = self.scheduler.prefix_pool.add_or_get_prefix(
+            prompt_token_ids[:prefix_pos], lora_request.lora_int_id
+            if lora_request else 0) if prefix_pos is not None else None
+
+        # Create the sequence group.
+        seq_group = SequenceGroup(request_id, [seq], sampling_params,
+                                  arrival_time, lora_request, prefix)
+
+        # Add the sequence group to the scheduler.
+        self.scheduler.add_seq_group(seq_group)
+        
+    def add_olora_request(
+        self,
+        request_id: str,
+        prompt: Optional[str],
+        sampling_params: SamplingParams,
+        prompt_token_ids: Optional[List[int]] = None,
+        arrival_time: Optional[float] = None,
+        lora_request: Optional[OLoRARequest] = None,
+        prefix_pos: Optional[int] = None
+    ):
+        if lora_request is not None and not self.lora_config:
+            raise ValueError(f"Got lora_request {lora_request} but LoRA is "
+                             "not enabled!")
+        if arrival_time is None:
+            arrival_time = time.monotonic()
+        prompt_token_ids = self.encode_olora_request(
             request_id=request_id,
             prompt=prompt,
             prompt_token_ids=prompt_token_ids,

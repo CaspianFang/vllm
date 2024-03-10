@@ -4,7 +4,7 @@ from transformers import (AutoTokenizer, PreTrainedTokenizer,
                           PreTrainedTokenizerFast)
 
 from vllm.logger import init_logger
-from vllm.lora.request import LoRARequest
+from vllm.lora.request import LoRARequest, OLoRARequest
 from vllm.utils import make_async, LRUCache
 from vllm.transformers_utils.tokenizers import *
 
@@ -106,7 +106,9 @@ class TokenizerGroup:
     def encode(self,
                prompt: str,
                request_id: Optional[str] = None,
-               lora_request: Optional[LoRARequest] = None) -> List[int]:
+               lora_request: Optional[LoRARequest] = None,
+               olora_request: Optional[OLoRARequest] = None) -> List[int]:
+        # TODO: Implement the tokenizer for OLoRARequest
         tokenizer = self.get_lora_tokenizer(lora_request)
         return tokenizer.encode(prompt)
 

@@ -1,5 +1,7 @@
 from dataclasses import dataclass
 
+from typing import List
+
 
 @dataclass
 class LoRARequest:
@@ -30,3 +32,30 @@ class LoRARequest:
 
     def __hash__(self) -> int:
         return self.lora_int_id
+
+
+@dataclass
+class OLoRARequest:
+    lora_name: List[str]
+    lora_int_id: List[int]
+    lora_local_path: List[str]
+    
+    def __post_init__(self):
+        for _id in self.lora_int_id:
+            if _id < 1:
+                raise ValueError(
+                    f"lora_int_id must be > 0, got {_id}")
+            
+    def __eq__(self, value: object) -> bool:
+        status = True
+        if isinstance(value, OLoRARequest):
+            for k, v in zip(self.lora_int_id, value.lora_int_id):
+                if k != v:
+                    status = False
+        return isinstance(
+            value, OLoRARequest) and status
+        
+    def __hash__(self) -> int:
+        # sort the list of lora_int_id
+        # TODO: There may be some problems
+        return hash(self.lora_int_id.sort())
