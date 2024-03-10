@@ -119,6 +119,26 @@ class BlockSpaceManager:
             return AllocStatus.OK
         else:
             return AllocStatus.LATER
+        
+    def can_allocate_mgr(self, seq_group: SequenceGroup) -> AllocStatus:
+        seq = seq_group.get_seqs(status=SequenceStatus.RUNNING)[0]
+        num_required_blocks = len(seq.logical_token_blocks)
+        
+        if seq_group.prefix is not None and seq_group.prefix.allocated:
+            num_required_blocks -= seq_group.prefix.get_num_blocks()
+        
+        if self.block_sliding_window is not None:
+            num_required_blocks = min(num_required_blocks,
+                                      self.block_sliding_window)
+        num_free_gpu_blocks = self.gpu_allocator.get_num_free_blocks()
+        
+        if (self.num_total_gpu_blocks - num_required_blocks <
+                self.watermark_blocks):
+            return AllocStatus.NEVER
+        if num_free_gpu_blocks - num_required_blocks >= self.watermark_blocks:
+            return AllocStatus.OK
+        else:
+            return AllocStatus.LATER
 
     def allocate(self, seq_group: SequenceGroup) -> None:
         # NOTE: Here we assume that all sequences in the group have the same
@@ -161,6 +181,43 @@ class BlockSpaceManager:
 
         # Assign the block table for each sequence.
         for seq in seq_group.get_seqs(status=SequenceStatus.WAITING):
+            self.block_tables[seq.seq_id] = block_table.copy()
+            
+    def allocate_mgr(self, seq_group: SequenceGroup) -> None:
+        # NOTE: Here we assume that all sequences in the group have the same
+        # prompt.
+        seq = seq_group.get_seqs(status=SequenceStatus.RUNNING)[0]
+        
+        num_prompt_blocks = len(seq.logical_token_blocks)
+        
+        block_table: BlockTable = []
+        prefix_block_table: BlockTable = []
+        num_prefix_blocks = 0
+        
+        prefix = seq_group.prefix
+        if prefix is not None and prefix.allocated:
+            num_prompt_blocks -= prefix.get_num_blocks()
+            for block in prefix.block_table:
+                block.ref_count += seq_group.num_seqs()
+                block_table.append(block)
+        
+        for logical_idx in range(num_prompt_blocks):
+            if (self.block_sliding_window is not None
+                    and logical_idx >= self.block_sliding_window):
+                block = block_table[logical_idx % self.block_sliding_window]
+            else:
+                block = self.gpu_allocator.allocate()
+            block.ref_count = seq_group.num_seqs()
+            block_table.append(block)
+            
+        if prefix is not None and not prefix.allocated:
+            num_prefix_blocks = prefix.get_num_blocks()
+            prefix_block_table = block_table[:num_prefix_blocks]
+            for block in prefix_block_table:
+                block.ref_count += 1
+            prefix.set_block_table(prefix_block_table)
+            
+        for seq in seq_group.get_seqs(status=SequenceStatus.RUNNING):
             self.block_tables[seq.seq_id] = block_table.copy()
 
     def can_append_slot(self, seq_group: SequenceGroup) -> bool:

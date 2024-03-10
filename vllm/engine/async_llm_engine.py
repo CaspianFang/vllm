@@ -50,15 +50,18 @@ class AsyncStream:
     def __init__(self, request_id: str) -> None:
         self.request_id = request_id
         self._queue = asyncio.Queue()
+        self._store_queue = asyncio.Queue()     # this queue is used to store the request outputs, to avoid being get()
         self._finished = False
 
     def put(self, item: RequestOutput) -> None:
         if self._finished:
             return
         self._queue.put_nowait(item)
+        self._store_queue.put_nowait(item)
 
     def finish(self) -> None:
         self._queue.put_nowait(StopAsyncIteration())
+        self._store_queue.put_nowait(StopAsyncIteration())
         self._finished = True
 
     @property
@@ -79,8 +82,8 @@ class AsyncStreamMetaData:
         self.request_id = stream.request_id
         self.finished = stream.finished
         self.request_outputs = []
-        while not stream._queue.empty():
-            self.request_outputs.append(stream._queue.get_nowait())
+        while not stream._store_queue.empty():
+            self.request_outputs.append(stream._store_queue.get_nowait())
 
 
 class RequestTracker:
@@ -94,6 +97,9 @@ class RequestTracker:
                                                 dict]] = asyncio.Queue()
         self._migrate_out: asyncio.Queue[str] = asyncio.Queue() # to record the requests to migrate out
         self._migrate_in: asyncio.Queue[str] = asyncio.Queue() # to record the requests to migrate in
+        
+        self._mgr_requests: asyncio.Queue[Tuple[AsyncStream, 
+                                                dict]] = asyncio.Queue()    # used to store the requests to migrate in
         self.new_requests_event = None
 
     def __contains__(self, item):
@@ -142,6 +148,30 @@ class RequestTracker:
         self.new_requests_event.set()
 
         return stream
+    
+    def recover_request(self,
+                        request_id: str,
+                        blocks, 
+                        seq_group,
+                        kv_cache,
+                        stream_meta_data) -> AsyncStream:
+        if request_id in self._request_streams:
+            raise KeyError(f"Request {request_id} already exists.")
+
+        new_stream = AsyncStream(request_id)
+        while len(stream_meta_data.request_outputs) > 0:
+            request_output = stream_meta_data.request_outputs.pop(0)
+            new_stream.put(request_output)
+            
+        self._mgr_requests.put_nowait((new_stream, {
+            "blocks": blocks,
+            "seq_group": seq_group,
+            "kv_cache": kv_cache,
+        }))
+        
+        self.new_requests_event.set()
+        
+        return new_stream
     
     def greedy_add_request(self, request_id: str):
         pass    # Samurai 03-08 here
@@ -201,6 +231,17 @@ class RequestTracker:
         self.new_requests_event.clear()
 
         return new_requests, finished_requests
+    
+    def get_migrate_in_requests(self) -> List[Dict]:
+        requests_resources: List[Dict] = []
+        
+        while not self._mgr_requests.empty():
+            stream, resouce = self._mgr_requests.get_nowait()
+            self._request_streams[stream.request_id] = stream   # here we will insert the stream into the request_streams
+            requests_resources.append(resouce)
+            
+        self.new_requests_event.clear()
+        return requests_resources
 
     def get_migrate_out_requests(self) -> Tuple[Set[str], List[AsyncStream]]:
         migrate_out_requests: Set[str] = set()
@@ -301,6 +342,13 @@ class _AsyncLLMEngine(LLMEngine):
             arrival_time=arrival_time,
             lora_request=lora_request,
             prefix_pos=prefix_pos,
+        )
+        
+    async def recover_request_async(self, resource: dict) -> None:
+        return self.recover_request(
+            blocks=resource["blocks"],
+            seq_group=resource["seq_group"],
+            kv_cache=resource["kv_cache"],
         )
 
     async def _run_workers_async(
@@ -446,32 +494,11 @@ class AsyncLLMEngine:
         else:
             return await self._migrate_in_queue.get()
         
-    async def recover_request(self, request_id, blocks, seq_group, kv_cache, stream_meta_data):
-        # first we recover stream meta data, a new request_id will be assigned by the task pool
-        # or scheduler.
-        new_stream = AsyncStream(request_id)
-        while len(stream_meta_data.request_outputs) > 0:
-            new_stream.put(stream_meta_data.request_outputs.pop(0))
-        
     
     async def before_engine_step(self):
         """before engine_step, check whether there are requests to migrate out.
         
         """
-        # migrate in logic
-        while not self._migrate_in_queue.empty():
-            # now we will resume the resources
-            print("Get resources!")
-            single_resource: MigrateResource = await self.get_resource(flag=1)
-            
-            # resume the resources
-            req_id = single_resource.request_id
-            req_blocks = single_resource.blocks
-            req_seq_group = single_resource.seq_group
-            req_kv_cache = single_resource.kv_cache
-            req_stream = single_resource.stream_meta_data
-        
-        
         # migrate out check logic
         migrate_out_requests, streams = self._request_tracker.get_migrate_out_requests()
         
@@ -508,6 +535,13 @@ class AsyncLLMEngine:
 
         new_requests, finished_requests = (
             self._request_tracker.get_new_and_finished_requests())
+        
+        mgin_resources = self._request_tracker.get_migrate_in_requests()
+        
+        # we will process the migrated requests first because they arrived earlier
+        for rs in mgin_resources:
+            # here we will not use ray
+            await self.engine.recover_request_async(rs)
 
         for new_request in new_requests:
             # Add the request into the vLLM engine's waiting queue.
@@ -610,6 +644,45 @@ class AsyncLLMEngine:
             prefix_pos=prefix_pos)
 
         return stream
+    
+    async def recover_request(
+        self, 
+        request_id: str,
+        blocks: Dict[int, int],
+        seq_group: SequenceGroup,
+        kv_cache: List[KVCache],
+        stream_meta_data: AsyncStreamMetaData
+    ) -> AsyncIterator[RequestOutput]:
+        """
+            This is the entrance of request migration, synchronous.
+        """
+        if not self.is_running:
+            if self.start_engine_loop:
+                self.start_background_loop()
+            else:
+                raise AsyncEngineDeadError(
+                    "Background loop is not running. If it was running, "
+                    "inspect the output to find the stacktrace of the "
+                    "error that caused the background loop to stop "
+                    "(AsyncEngineDeadError).")
+        
+        try:
+            new_stream = self._request_tracker.recover_request(
+                request_id, 
+                blocks, 
+                seq_group,
+                kv_cache,
+                stream_meta_data
+            )
+            
+            # return new_stream
+            async for request_output in new_stream:
+                yield request_output
+        except (Exception, asyncio.CancelledError) as e:
+            # If there is an exception or coroutine is cancelled, abort the
+            # request.
+            self._abort(request_id)
+            raise e
 
     async def generate(
         self,

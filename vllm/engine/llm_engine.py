@@ -458,6 +458,18 @@ class LLMEngine:
 
         # Add the sequence group to the scheduler.
         self.scheduler.add_seq_group(seq_group)
+    
+    def recover_request(
+        self, 
+        blocks: dict, 
+        seq_group: SequenceGroup,
+        kv_cache
+    ):
+        # now we are going to resume the sequence id
+        for seq in seq_group.get_seqs():
+            curr_seq_id = next(self.seq_counter)
+            seq.seq_id = curr_seq_id
+        self.scheduler.recover_seq_group(seq_group)
 
     def abort_request(self, request_id: Union[str, Iterable[str]]) -> None:
         """Aborts a request(s) with the given ID.

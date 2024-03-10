@@ -106,6 +106,9 @@ class Scheduler:
         self.running: Deque[SequenceGroup] = deque()
         # Sequence groups in the SWAPPED state.
         self.swapped: Deque[SequenceGroup] = deque()
+        
+        # Sequence groups migrated here.
+        self.migrate_in: Deque[SequenceGroup] = deque()
 
     @property
     def lora_enabled(self) -> bool:
@@ -114,6 +117,9 @@ class Scheduler:
     def add_seq_group(self, seq_group: SequenceGroup) -> None:
         # Add sequence groups to the waiting queue.
         self.waiting.append(seq_group)
+        
+    def recover_seq_group(self, seq_group: SequenceGroup) -> None:
+        self.migrate_in.append(seq_group)
 
     def abort_seq_group(self, request_id: Union[str, Iterable[str]]) -> None:
         """Aborts a sequence group with the given ID.
@@ -170,6 +176,11 @@ class Scheduler:
                     state_queue.remove(seq_group)   # remove from any queue 
 
                     tmp_blocks_dict: Dict[int, int] = {}
+                    # === TEST ZONE ===
+                    # tmp_seq_group = seq_group
+                    # for seq in tmp_seq_group.get_seqs():
+                    #     print(f"seq_id: {seq.seq_id}, status: {seq.status}, prompt: {seq.prompt}")
+                    # =================
                     # The key idea here is to swap out and free the space, because we will not use it anymore.
                     self._migrate_out(seq_group, tmp_blocks_dict)
                     
@@ -300,6 +311,48 @@ class Scheduler:
                 scheduled.append(seq_group)
 
             self.waiting.extendleft(leftover_waiting_sequences)
+            
+            # now we will process migrated sequence groups
+            leftover_migrated_sequences = deque()
+            while self.migrate_in:
+                seq_group = self.migrate_in[0]
+                resume_seqs = seq_group.get_seqs(
+                    status=SequenceStatus.RUNNING)
+                
+                # If the sequence group cannot be allocated, stop.
+                can_allocate = self.block_manager.can_allocate_mgr(seq_group)
+                if can_allocate == AllocStatus.LATER:
+                    break
+                elif can_allocate == AllocStatus.NEVER:
+                    logger.warning(
+                        f"Input prompt ({num_prompt_tokens} tokens) is too long"
+                        f" and exceeds the capacity of block_manager")
+                    for seq in resume_seqs:
+                        seq.status = SequenceStatus.FINISHED_IGNORED
+                    ignored_seq_groups.append(seq_group)
+                    self.migrate_in.popleft()
+                    continue
+                
+                lora_int_id = 0
+                if self.lora_enabled:
+                    lora_int_id = seq_group.lora_int_id
+                    if lora_int_id > 0 and lora_int_id not in curr_loras and len(
+                            curr_loras) >= self.lora_config.max_loras:
+                        # We don't have a space for another LoRA, so
+                        # we ignore this request for now.
+                        leftover_migrated_sequences.append(seq_group)
+                        self.migrate_in.popleft()
+                        continue
+                    
+                if lora_int_id > 0:
+                    curr_loras.add(lora_int_id)
+                self.migrate_in.popleft()
+                self.running.append(seq_group)
+
+                self._allocate_mgr(seq_group)
+                scheduled.append(seq_group)
+                
+            self.migrate_in.extendleft(leftover_migrated_sequences)
 
             if scheduled or ignored_seq_groups:
                 scheduler_outputs = SchedulerOutputs(
@@ -432,6 +485,8 @@ class Scheduler:
                 prefix=seq_group.prefix,
             )
             seq_group_metadata_list.append(seq_group_metadata)
+            # print(f"block: {block_tables}")
+            
         return seq_group_metadata_list, scheduler_outputs
 
     def fork_seq(self, parent_seq: Sequence, child_seq: Sequence) -> None:
@@ -448,6 +503,9 @@ class Scheduler:
         self.block_manager.allocate(seq_group)
         for seq in seq_group.get_seqs(status=SequenceStatus.WAITING):
             seq.status = SequenceStatus.RUNNING
+            
+    def _allocate_mgr(self, seq_group: SequenceGroup) -> None:
+        self.block_manager.allocate_mgr(seq_group)
 
     def _append_slot(
         self,
