@@ -6,7 +6,7 @@ from typing import Dict, List, Optional, Union
 from vllm.block import LogicalTokenBlock
 from vllm.prefix import Prefix
 from vllm.sampling_params import SamplingParams
-from vllm.lora.request import LoRARequest
+from vllm.lora.request import LoRARequest, OLoRARequest
 
 PromptLogprobs = List[Optional[Dict[int, float]]]
 SampleLogprobs = List[Dict[int, float]]
@@ -108,6 +108,7 @@ class Sequence:
         block_size: The block size of the sequence. Should be the same as the
             block size used by the block manager and cache engine.
         lora_request: LoRA request.
+        olora_request: OLoRA request.
     """
 
     def __init__(
@@ -117,11 +118,13 @@ class Sequence:
         prompt_token_ids: List[int],
         block_size: int,
         lora_request: Optional[LoRARequest] = None,
+        olora_request: Optional[OLoRARequest] = None,
     ) -> None:
         self.seq_id = seq_id
         self.prompt = prompt
         self.block_size = block_size
         self.lora_request = lora_request
+        self.olora_request = olora_request
 
         self.data = SequenceData(prompt_token_ids)
         self.output_logprobs: SampleLogprobs = []
@@ -141,6 +144,10 @@ class Sequence:
     @property
     def lora_int_id(self) -> int:
         return self.lora_request.lora_int_id if self.lora_request else 0
+    
+    @property
+    def olora_int_ids(self) -> int:
+        return self.olora_request.lora_int_id if self.olora_request else 0
 
     def _append_logical_block(self) -> None:
         block = LogicalTokenBlock(
@@ -238,6 +245,7 @@ class SequenceGroup:
         sampling_params: The sampling parameters used to generate the outputs.
         arrival_time: The arrival time of the request.
         lora_request: LoRA request.
+        olora_request: OLoRA request.
         prefix: The prefix of the prompt of the sequence group.
     """
 
@@ -248,6 +256,7 @@ class SequenceGroup:
         sampling_params: SamplingParams,
         arrival_time: float,
         lora_request: Optional[LoRARequest] = None,
+        olora_request: Optional[OLoRARequest] = None,
         prefix: Optional[Prefix] = None,
     ) -> None:
         self.request_id = request_id
@@ -255,6 +264,7 @@ class SequenceGroup:
         self.sampling_params = sampling_params
         self.arrival_time = arrival_time
         self.lora_request = lora_request
+        self.olora_request = olora_request
         self.prefix: Optional[Prefix] = prefix
         self.prompt_logprobs: Optional[PromptLogprobs] = None
 
@@ -273,6 +283,10 @@ class SequenceGroup:
     @property
     def lora_int_id(self) -> int:
         return self.lora_request.lora_int_id if self.lora_request else 0
+
+    @property
+    def olora_int_ids(self) -> int:
+        return self.olora_request.lora_int_id if self.olora_request else 0
 
     def get_max_num_running_seqs(self) -> int:
         """The maximum number of sequences running in parallel in the remaining
@@ -354,6 +368,7 @@ class SequenceGroupMetadata:
         block_tables: The block tables. (Seq id -> list of physical block
             numbers)
         lora_request: LoRA request.
+        olora_request: OLoRA request.
         prefix: The prefix of the prompt of the sequence group.
     """
 
@@ -365,6 +380,7 @@ class SequenceGroupMetadata:
         sampling_params: SamplingParams,
         block_tables: Dict[int, List[int]],
         lora_request: Optional[LoRARequest] = None,
+        olora_request: Optional[OLoRARequest] = None,
         prefix: Optional[Prefix] = None,
     ) -> None:
         self.request_id = request_id
@@ -373,11 +389,16 @@ class SequenceGroupMetadata:
         self.sampling_params = sampling_params
         self.block_tables = block_tables
         self.lora_request = lora_request
+        self.olora_request = olora_request
         self.prefix = prefix
 
     @property
     def lora_int_id(self) -> int:
         return self.lora_request.lora_int_id if self.lora_request else 0
+    
+    @property
+    def olora_int_ids(self) -> int:
+        return self.olora_request.lora_int_id if self.olora_request else 0
 
 
 class SequenceOutput:

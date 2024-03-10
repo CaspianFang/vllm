@@ -65,7 +65,7 @@ class LLMEngine:
         cache_config: CacheConfig,
         parallel_config: ParallelConfig,
         scheduler_config: SchedulerConfig,
-        lora_config: Optional[LoRAConfig],
+        lora_config: Optional[LoRAConfig], # Caesar: This parameter is also used for O-LoRA
         placement_group: Optional["PlacementGroup"],
         log_stats: bool,
     ) -> None:
@@ -128,6 +128,9 @@ class LLMEngine:
 
     def get_tokenizer_for_seq(self, sequence: Sequence):
         return self.tokenizer.get_lora_tokenizer(sequence.lora_request)
+
+    def get_olora_tokenizer_for_seq(self, sequence: Sequence):
+        return self.tokenizer.get_olora_tokenizer(sequence.olora_request)
 
     def _init_workers(self):
         # Lazy import the Worker to avoid importing torch.cuda/xformers
@@ -480,11 +483,11 @@ class LLMEngine:
         sampling_params: SamplingParams,
         prompt_token_ids: Optional[List[int]] = None,
         arrival_time: Optional[float] = None,
-        lora_request: Optional[OLoRARequest] = None,
+        olora_request: Optional[OLoRARequest] = None,
         prefix_pos: Optional[int] = None
     ):
-        if lora_request is not None and not self.lora_config:
-            raise ValueError(f"Got lora_request {lora_request} but LoRA is "
+        if olora_request is not None and not self.lora_config:
+            raise ValueError(f"Got olora_request {olora_request} but OLoRA is "
                              "not enabled!")
         if arrival_time is None:
             arrival_time = time.monotonic()
@@ -492,22 +495,22 @@ class LLMEngine:
             request_id=request_id,
             prompt=prompt,
             prompt_token_ids=prompt_token_ids,
-            lora_request=lora_request)
+            olora_request=olora_request)
 
         # Create the sequences.
         block_size = self.cache_config.block_size
         seq_id = next(self.seq_counter)
         seq = Sequence(seq_id, prompt, prompt_token_ids, block_size,
-                       lora_request)
+                       olora_request)
 
         # Check whether the input specifies prefix
         prefix = self.scheduler.prefix_pool.add_or_get_prefix(
-            prompt_token_ids[:prefix_pos], lora_request.lora_int_id
-            if lora_request else 0) if prefix_pos is not None else None
+            prompt_token_ids[:prefix_pos], olora_request.lora_int_id
+            if olora_request else 0) if prefix_pos is not None else None
 
         # Create the sequence group.
         seq_group = SequenceGroup(request_id, [seq], sampling_params,
-                                  arrival_time, lora_request, prefix)
+                                  arrival_time, olora_request, prefix)
 
         # Add the sequence group to the scheduler.
         self.scheduler.add_seq_group(seq_group)
@@ -1034,6 +1037,27 @@ class LLMEngine:
 
     def list_loras(self) -> List[int]:
         return self._run_workers("list_loras")
+
+    def add_olora(self, olora_request: OLoRARequest) -> bool:
+        for _id in olora_request.lora_int_id:
+            assert _id > 0, "lora_id must be greater than 0."
+
+        return self._run_workers(
+            "add_olora",
+            olora_request=olora_request,
+        )
+    
+    def remove_olora(self, lora_id: int) -> bool:
+        for _id in olora_request.lora_int_id:
+            assert _id > 0, "lora_id must be greater than 0."
+
+        return self._run_workers(
+            "remove_olora",
+            lora_id=lora_id,
+        )
+    
+    def list_oloras(self) -> List[int]:
+        return self._run_workers("list_oloras")
 
     def _run_workers(
         self,

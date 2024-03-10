@@ -84,40 +84,70 @@ def get_lora_tokenizer(lora_request: LoRARequest, *args,
         tokenizer = None
     return tokenizer
 
+def get_olora_tokenizer(olora_request: OLoRARequest, *args,
+                          **kwargs) -> Optional[PreTrainedTokenizer]:
+    if olora_request is None:
+        return None
+    try:
+        tokenizer = get_tokenizer(olora_request.lora_local_path, *args,
+                                  **kwargs)
+    except OSError as e:
+        # No tokenizer was found in the OLoRA folder,
+        # use base model tokenizer
+        logger.warning(
+            f"No tokenizer found in {olora_request.lora_local_path}, "
+            "using base model tokenizer instead. "
+            f"(Exception: {str(e)})")
+        tokenizer = None
+    return tokenizer
 
 get_lora_tokenizer_async = make_async(get_lora_tokenizer)
+get_olora_tokenizer_async = make_async(get_olora_tokenizer)
 
 
 class TokenizerGroup:
-    """A group of tokenizers that can be used for LoRA adapters."""
+    """A group of tokenizers that can be used for LoRA adapters or OLoRA adapters."""
 
-    def __init__(self, tokenizer_id: str, enable_lora: bool, max_num_seqs: int,
+    def __init__(self, tokenizer_id: str, enable_lora: bool, enable_olora: bool, max_num_seqs: int,
                  max_input_length: Optional[int], **tokenizer_config):
         self.tokenizer_id = tokenizer_id
         self.tokenizer_config = tokenizer_config
         self.enable_lora = enable_lora
+        self.enable_olora = enable_olora
         self.max_input_length = max_input_length
         self.tokenizer = get_tokenizer(self.tokenizer_id, **tokenizer_config)
         if enable_lora:
             self.lora_tokenizers = LRUCache(capacity=max_num_seqs)
+        elif enable_olora:
+            self.olora_tokenizers = LRUCache(capacity=max_num_seqs)
         else:
             self.lora_tokenizers = None
+            self.olora_tokenizers = None
 
     def encode(self,
                prompt: str,
                request_id: Optional[str] = None,
                lora_request: Optional[LoRARequest] = None,
                olora_request: Optional[OLoRARequest] = None) -> List[int]:
-        # TODO: Implement the tokenizer for OLoRARequest
-        tokenizer = self.get_lora_tokenizer(lora_request)
+        assert lora_request is None or olora_request is None
+        if olora_request:
+            tokenizer = self.get_olora_tokenizer(olora_request)
+        else:
+            tokenizer = self.get_lora_tokenizer(lora_request)
         return tokenizer.encode(prompt)
 
     async def encode_async(
             self,
             prompt: str,
             request_id: Optional[str] = None,
-            lora_request: Optional[LoRARequest] = None) -> List[int]:
-        tokenizer = await self.get_lora_tokenizer_async(lora_request)
+            lora_request: Optional[LoRARequest] = None,
+            olora_request: Optional[OLoRARequest] = None) -> List[int]:
+        assert lora_request is None or olora_request is None
+        if olora_request:
+            tokenizer = await self.get_olora_tokenizer_async(olora_request)
+        else:
+            tokenizer = await self.get_lora_tokenizer_async(lora_request)
+
         return tokenizer.encode(prompt)
 
     def get_lora_tokenizer(
@@ -132,6 +162,17 @@ class TokenizerGroup:
             return tokenizer
         else:
             return self.lora_tokenizers.get(lora_request.lora_int_id)
+    
+    def get_olora_tokenizer(
+            self,
+            olora_request: Optional[OLoRARequest]) -> "PreTrainedTokenizer":
+        if not olora_request or not self.enable_lora:
+            return self.tokenizer
+        if olora_request.lora_int_id not in self.olora_tokenizers:
+            tokenizer = (get_olora_tokenizer(
+                olora_request, **self.tokenizer_config) or self.tokenizer)
+            self.olora_tokenizers.put(olora_request.lora_int_id, tokenizer)
+            return tokenizer
 
     async def get_lora_tokenizer_async(
             self,
@@ -145,6 +186,19 @@ class TokenizerGroup:
             return tokenizer
         else:
             return self.lora_tokenizers.get(lora_request.lora_int_id)
+
+    async def get_olora_tokenizer_async(
+            self,
+            olora_request: Optional[OLoRARequest]) -> "PreTrainedTokenizer":
+        if not olora_request or not self.enable_olora:
+            return self.tokenizer
+        if olora_request.lora_int_id not in self.olora_tokenizers:
+            tokenizer = (await get_olora_tokenizer_async(
+                olora_request, **self.tokenizer_config) or self.tokenizer)
+            self.olora_tokenizers.put(olora_request.lora_int_id, tokenizer)
+            return tokenizer
+        else:
+            return self.olora_tokenizers.get(olora_request.lora_int_id)
 
 
 def _convert_tokens_to_string_with_added_encoders(
