@@ -14,7 +14,7 @@ from torch import nn
 from vllm.config import LoRAConfig
 from vllm.utils import LRUCache, in_wsl
 
-from vllm.lora.layers import BaseLayerWithLoRA, LoRAMapping, from_layer, from_layer_sampler
+from vllm.lora.layers import BaseLayerWithLoRA, LoRAMapping, from_layer, from_layer_sampler,OLoRAMapping
 from vllm.lora.lora import LoRALayerWeights, PackedLoRALayerWeights
 from vllm.lora.utils import parse_fine_tuned_lora_name, replace_submodule
 
@@ -125,6 +125,61 @@ def convert_mapping(
 
     return (base_indices, sampler_indices, sampler_indices_padded,
             embeddings_indices, indices_len)
+
+# not done yet , sampler is wrong in this case
+def convert_olora_mapping(
+    mapping: OLoRAMapping, lora_index_to_id: List[Optional[int]],
+    max_loras: int, vocab_size: int, extra_vocab_size: int,max_olora:int
+)->Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, List[int]]:
+    pad_ids = [
+        _pad_to_max( [y for y in x ], max_olora,0) if len(x) > 0 else _pad_to_max([],max_olora,0) for x in mapping.index_mapping 
+    ]
+    indices = pad_ids.copy()
+    embedding_indices = indices.copy()
+    lora_indices = indices.copy()
+    prompt_mapping = [
+        _pad_to_max( [lora_index_to_id.index(y) for y in x ], max_olora,-1) if len(x) > 0 else _pad_to_max([],max_olora,-1) for x in mapping.prompt_mapping 
+    ]
+    lora_idx = None
+    for i in range(len(indices)):
+        for j in range(len(i)):
+        # TODO index can be slow. optimize
+            lora_idx = (lora_index_to_id.index(indices[i][j])
+                        if indices[i][j] > 0 else -1)
+            embedding_indices[i][j] = lora_idx if indices[i][j] > 0 else 0
+            indices[i][j] = i
+            lora_indices[i][j] = lora_idx
+
+    indices = torch.tensor([indices, lora_indices, embedding_indices],
+                           dtype=torch.long,
+                           device="cuda")
+    prompt_mapping = torch.tensor(prompt_mapping,
+                                  device="cuda",
+                                  dtype=torch.long)
+    embeddings_indices = torch.stack([
+        indices[2] * extra_vocab_size,
+        indices[2] * (vocab_size + extra_vocab_size)
+    ])
+    embeddings_indices[embeddings_indices == -1] = max_loras - 1
+    base_indices = indices[1]
+    sampler_indices = prompt_mapping
+    sampler_indices_padded = sampler_indices.clone()
+    sampler_indices_padded[sampler_indices_padded == -1] = max_loras - 1
+    sampler_indices_padded = (
+        torch.arange(
+            0, len(sampler_indices_padded), device="cuda", dtype=torch.long) +
+        (sampler_indices_padded * len(sampler_indices_padded)))
+    indices_len = (base_indices.shape[-1], sampler_indices.shape[-1],
+                   sampler_indices_padded.shape[-1],
+                   embeddings_indices.shape[-1])
+
+    return (base_indices, sampler_indices, sampler_indices_padded,
+            embeddings_indices, indices_len)
+
+
+def _pad_to_max(x:List[int],max_len:int,pad:int)->List[int]:
+    assert len(x) <= max_len
+    return x + [pad] * (max_len-len(x))
 
 
 def get_lora_id():

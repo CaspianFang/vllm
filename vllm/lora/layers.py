@@ -110,6 +110,14 @@ class LoRAMapping:
         self.index_mapping = tuple(self.index_mapping)
         self.prompt_mapping = tuple(self.prompt_mapping)
 
+@dataclass
+class OLoRAMapping:
+    # Per every token in input_ids:
+    index_mapping: Tuple[List[int],...]
+    # Per sampled token:
+    prompt_mapping: Tuple[List[int],...]
+    
+
 
 class BaseLayerWithLoRA(nn.Module):
 

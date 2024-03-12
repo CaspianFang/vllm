@@ -39,7 +39,9 @@ class OLoRARequest:
     lora_name: List[str]
     lora_int_id: List[int]
     lora_local_path: List[str]
-    
+    self_id : int
+    lora_reqs: List[LoRARequest]
+
     def __post_init__(self):
         for _id in self.lora_int_id:
             if _id < 1:

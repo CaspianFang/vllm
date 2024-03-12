@@ -6,8 +6,8 @@ import torch
 
 from vllm.lora.models import (TARGET_MODULES_QKV, LoRAModel, LoRAModelManager,
                               LRUCacheLoRAModelManager, create_lora_manager)
-from vllm.lora.request import LoRARequest
-from vllm.lora.layers import LoRAMapping
+from vllm.lora.request import LoRARequest,OLoRARequest
+from vllm.lora.layers import LoRAMapping,OLoRAMapping
 from vllm.config import LoRAConfig
 
 logger = logging.getLogger(__name__)
@@ -111,6 +111,11 @@ class WorkerLoRAManager(WorkerLoRAManager):
         self._apply_loras(lora_requests)
         self._lora_manager.set_lora_mapping(lora_mapping)
 
+    def set_activate_aloras(self, olora_requests: List[OLoRARequest],
+                         lora_mapping: OLoRAMapping) -> None:
+        self._apply_oloras(olora_requests)
+        self._lora_manager.set_olora_mapping(lora_mapping)
+
     def _apply_loras(self, lora_requests: List[LoRARequest]) -> None:
         loras_that_exist = self.list_loras()
         loras_map = {
@@ -132,6 +137,31 @@ class WorkerLoRAManager(WorkerLoRAManager):
 
         for lora_id in loras_to_add:
             self.add_lora(loras_map[lora_id])
+    
+    def _apply_oloras(self, olora_requests: List[OLoRARequest]) -> None:
+        loras_that_exist = self.list_loras()
+        loras_map = {
+            lora_request.lora_int_id: lora_request
+            for olora_request in olora_requests if olora_request
+            for lora_request in olora_request.lora_reqs
+        }
+        new_loras = set(loras_map)
+        if len(new_loras) > self._lora_manager.lora_slots:
+            raise RuntimeError(
+                f"Number of requested LoRAs ({len(new_loras)}) is greater "
+                "than the number of GPU LoRA slots "
+                f"({self._lora_manager.lora_slots}).")
+        
+        loras_to_add = new_loras - loras_that_exist
+        loras_to_remove = loras_that_exist - new_loras
+
+        for lora_id in loras_to_remove:
+            self.remove_lora(lora_id)
+
+        for lora_id in loras_to_add:
+            self.add_lora(loras_map[lora_id])
+
+
 
     def _load_lora(self, lora_request: LoRARequest) -> LoRAModel:
         try:
@@ -221,6 +251,22 @@ class LRUCacheWorkerLoRAManager(WorkerLoRAManager):
                 f"({self._lora_manager.lora_slots}).")
         for lora in loras_map.values():
             self.add_lora(lora)
+
+    def _apply_oloras(self, olora_requests: List[OLoRARequest]) -> None:
+        loras_map = {
+            lora_request.lora_int_id: lora_request
+            for olora_request in olora_requests if olora_request
+            for lora_request in olora_request.lora_reqs
+        }
+        new_loras = set(loras_map)
+        if len(new_loras) > self._lora_manager.lora_slots:
+            raise RuntimeError(
+                f"Number of requested LoRAs ({len(new_loras)}) is greater "
+                "than the number of GPU LoRA slots "
+                f"({self._lora_manager.lora_slots}).")
+        for lora in loras_map.values():
+            self.add_lora(lora)
+            
 
     def add_lora(self, lora_request: LoRARequest) -> bool:
         if lora_request.lora_int_id not in self.list_loras():
