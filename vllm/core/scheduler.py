@@ -273,6 +273,7 @@ class Scheduler:
                     continue
 
                 lora_int_id = 0
+                olora_int_ids = [] # caesar
                 if self.lora_enabled:
                     lora_int_id = seq_group.lora_int_id
                     if lora_int_id > 0 and lora_int_id not in curr_loras and len(
@@ -282,6 +283,22 @@ class Scheduler:
                         leftover_waiting_sequences.appendleft(seq_group)
                         self.waiting.popleft()
                         continue
+                    # caesar
+                    elif seq_group.olora_int_ids:
+                        olora_int_ids = seq_group.olora_int_ids
+                        num_new_lora = 0
+                        for olora_int_id in olora_int_ids:
+                            if olora_int_id > 0 and olora_int_id not in curr_loras:
+                                num_new_lora += 1
+                        
+                        if num_new_lora > 0 and len(curr_loras) + num_new_lora > self.lora_config.max_loras:
+                            # We don't have enough space for new LoRAs, so
+                            # we ignore this request for now.
+                            leftover_waiting_sequences.appendleft(seq_group)
+                            self.waiting.popleft()
+                            continue
+
+
 
                 # If the number of batched tokens exceeds the limit, stop.
                 new_seq_lens = seq_lens + [num_prompt_tokens]
@@ -304,6 +321,12 @@ class Scheduler:
 
                 if lora_int_id > 0:
                     curr_loras.add(lora_int_id)
+                # caesar
+                elif olora_int_ids:
+                    for olora_int_id in olora_int_ids:
+                        if olora_int_id > 0:
+                            curr_loras.add(olora_int_id)
+                
                 self.waiting.popleft()
                 self._allocate(seq_group)
                 self.running.append(seq_group)
@@ -334,6 +357,7 @@ class Scheduler:
                     continue
                 
                 lora_int_id = 0
+                olora_int_ids = [] # caesar
                 if self.lora_enabled:
                     lora_int_id = seq_group.lora_int_id
                     if lora_int_id > 0 and lora_int_id not in curr_loras and len(
@@ -343,9 +367,29 @@ class Scheduler:
                         leftover_migrated_sequences.append(seq_group)
                         self.migrate_in.popleft()
                         continue
+                    # caesar
+                    elif seq_group.olora_int_ids:
+                        olora_int_ids = seq_group.olora_int_ids
+                        num_new_lora = 0
+                        for olora_int_id in olora_int_ids:
+                            if olora_int_id > 0 and olora_int_id not in curr_loras:
+                                num_new_lora += 1
+                        
+                        if num_new_lora > 0 and len(curr_loras) + num_new_lora > self.lora_config.max_loras:
+                            # We don't have enough space for new LoRAs, so
+                            # we ignore this request for now.
+                            leftover_migrated_sequences.append(seq_group)
+                            self.migrate_in.popleft()
+                            continue
                     
                 if lora_int_id > 0:
                     curr_loras.add(lora_int_id)
+                # caesar
+                elif olora_int_ids:
+                    for olora_int_id in olora_int_ids:
+                        if olora_int_id > 0:
+                            curr_loras.add(olora_int_id)
+                
                 self.migrate_in.popleft()
                 self.running.append(seq_group)
 
@@ -410,6 +454,7 @@ class Scheduler:
             while self.swapped:
                 seq_group = self.swapped[0]
                 lora_int_id = 0
+                olora_int_ids = [] # caesar
                 if self.lora_enabled:
                     lora_int_id = seq_group.lora_int_id
                     if lora_int_id > 0 and lora_int_id not in curr_loras and len(
@@ -419,6 +464,20 @@ class Scheduler:
                         leftover_swapped.appendleft(seq_group)
                         self.swapped.popleft()
                         continue
+                    # caesar
+                    elif seq_group.olora_int_ids:
+                        olora_int_ids = seq_group.olora_int_ids
+                        num_new_lora = 0
+                        for olora_int_id in olora_int_ids:
+                            if olora_int_id > 0 and olora_int_id not in curr_loras:
+                                num_new_lora += 1
+                        
+                        if num_new_lora > 0 and len(curr_loras) + num_new_lora > self.lora_config.max_loras:
+                            # We don't have enough space for new LoRAs, so
+                            # we ignore this request for now.
+                            leftover_swapped.appendleft(seq_group)
+                            self.swapped.popleft()
+                            continue
 
                 # If the sequence group cannot be swapped in, stop.
                 if not self.block_manager.can_swap_in(seq_group):
@@ -433,6 +492,12 @@ class Scheduler:
 
                 if lora_int_id > 0:
                     curr_loras.add(lora_int_id)
+                # caesar
+                elif olora_int_ids:
+                    for olora_int_id in olora_int_ids:
+                        if olora_int_id > 0:
+                            curr_loras.add(olora_int_id)
+
                 self.swapped.popleft()
                 self._swap_in(seq_group, blocks_to_swap_in)
                 self._append_slot(seq_group, blocks_to_copy)
@@ -498,6 +563,20 @@ class Scheduler:
     def free_finished_seq_groups(self) -> None:
         self.running = deque(seq_group for seq_group in self.running
                              if not seq_group.is_finished())
+
+    def get_stats(self) -> Dict[str, int]:
+        curr_loras = set(
+                seq_group.lora_int_id
+                for seq_group in self.running) if self.lora_enabled else None
+        
+        return {
+            "num_waiting": len(self.waiting),
+            "num_running": len(self.running),
+            "num_swapped": len(self.swapped),
+            "current_loras": curr_loras,
+            "num_free_gpu_blocks": self.block_manager.num_free_gpu_blocks,
+            "num_free_cpu_blocks": self.block_manager.num_free_cpu_blocks,
+        }
 
     def _allocate(self, seq_group: SequenceGroup) -> None:
         self.block_manager.allocate(seq_group)

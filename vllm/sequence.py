@@ -268,6 +268,8 @@ class SequenceGroup:
         self.prefix: Optional[Prefix] = prefix
         self.prompt_logprobs: Optional[PromptLogprobs] = None
 
+        assert lora_request is None or olora_request is None
+
     @property
     def prompt(self) -> str:
         # All sequences in the group should have the same prompt.
@@ -285,8 +287,8 @@ class SequenceGroup:
         return self.lora_request.lora_int_id if self.lora_request else 0
 
     @property
-    def olora_int_ids(self) -> int:
-        return self.olora_request.lora_int_id if self.olora_request else 0
+    def olora_int_ids(self) -> List[int]:
+        return self.olora_request.olora_int_ids if self.olora_request else 0
 
     def get_max_num_running_seqs(self) -> int:
         """The maximum number of sequences running in parallel in the remaining
@@ -392,13 +394,15 @@ class SequenceGroupMetadata:
         self.olora_request = olora_request
         self.prefix = prefix
 
+        assert lora_request is None or olora_request is None
+
     @property
     def lora_int_id(self) -> int:
         return self.lora_request.lora_int_id if self.lora_request else 0
     
     @property
-    def olora_int_ids(self) -> int:
-        return self.olora_request.lora_int_id if self.olora_request else 0
+    def olora_int_ids(self) -> List[int]:
+        return self.olora_request.olora_int_ids if self.olora_request else 0
 
 
 class SequenceOutput:

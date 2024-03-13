@@ -494,6 +494,11 @@ class AsyncLLMEngine:
         else:
             return await self._migrate_in_queue.get()
         
+    async def get_stats(self) -> Dict[str, Any]:
+        """Gets the statistics of the engine for scheduling,
+        including waiting requests, running requests, swapped requests,
+        current loras, and num of free blocks in gpu and cpu, current running mode, etc."""
+        return self.engine.get_stats()
     
     async def before_engine_step(self):
         """before engine_step, check whether there are requests to migrate out.

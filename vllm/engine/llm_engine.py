@@ -86,7 +86,7 @@ class LLMEngine:
             f"quantization={model_config.quantization}, "
             f"enforce_eager={model_config.enforce_eager}, "
             f"kv_cache_dtype={cache_config.cache_dtype}, "
-            f"seed={model_config.seed})")
+            f"seed={model_config.seed})"
         # TODO(woosuk): Print more configs in debug mode.
 
         self.model_config = model_config
@@ -571,6 +571,12 @@ class LLMEngine:
     def has_unfinished_requests(self) -> bool:
         """Returns True if there are unfinished requests."""
         return self.scheduler.has_unfinished_seqs()
+
+    def get_stats(self) -> Dict[str, Any]: # caesar
+        """Gets the statistics of the engine for scheduling,
+        including waiting requests, running requests, swapped requests,
+        current loras, and num of free blocks in gpu and cpu, current running mode, etc."""
+        return self.scheduler.get_stats()
 
     def _check_beam_search_early_stopping(
         self,

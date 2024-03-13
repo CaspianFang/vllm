@@ -116,6 +116,9 @@ class TokenizerGroup:
         self.enable_olora = enable_olora
         self.max_input_length = max_input_length
         self.tokenizer = get_tokenizer(self.tokenizer_id, **tokenizer_config)
+
+        assert enable_lora is False or enable_olora is False
+        
         if enable_lora:
             self.lora_tokenizers = LRUCache(capacity=max_num_seqs)
         elif enable_olora:
