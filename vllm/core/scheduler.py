@@ -575,7 +575,7 @@ class Scheduler:
             "num_swapped": len(self.swapped),
             "current_loras": curr_loras,
             "num_free_gpu_blocks": self.block_manager.num_free_gpu_blocks,
-            "num_free_cpu_blocks": self.block_manager.num_free_cpu_blocks,
+            "num_free_cpu_blocks": self.block_manager.num_free_cpu_blocks
         }
 
     def _allocate(self, seq_group: SequenceGroup) -> None:
