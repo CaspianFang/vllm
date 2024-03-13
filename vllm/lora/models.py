@@ -167,12 +167,12 @@ def convert_olora_mapping(
     sampler_indices_padded[sampler_indices_padded == -1] = max_loras - 1
     sampler_indices_padded = (
         torch.arange(
-            0, len(sampler_indices_padded), device="cuda", dtype=torch.long) +
-        (sampler_indices_padded * len(sampler_indices_padded)))
-    indices_len = (base_indices.shape[-1], sampler_indices.shape[-1],
-                   sampler_indices_padded.shape[-1],
-                   embeddings_indices.shape[-1])
-
+            0, sampler_indices_padded.shape[0], device="cuda", dtype=torch.long).repeat(max_olora,1).T +
+        (sampler_indices_padded * (sampler_indices_padded).shape[0]))
+    indices_len = (base_indices.shape[-2], sampler_indices.shape[-2],
+                   sampler_indices_padded.shape[-2],
+                   embeddings_indices.shape[-2])
+    # here may cause some bug
     return (base_indices, sampler_indices, sampler_indices_padded,
             embeddings_indices, indices_len)
 
@@ -350,22 +350,23 @@ class LoRAModelManager:
                 into multiple layers in the adapted model.
         """
         self.lora_config = lora_config
+        self.max_olora = lora_config.max_oloras
         self.max_num_seqs = max_num_seqs
         assert self.capacity >= self.lora_slots
         self.max_num_batched_tokens = math.ceil(max_num_batched_tokens / 8) * 8
         self.lora_index_to_id: List[Optional[int]] = [None] * self.lora_slots
         self.vocab_size = vocab_size
-        self.base_indices = torch.empty(self.max_num_batched_tokens,
+        self.base_indices = torch.empty((self.max_num_batched_tokens,self.max_olora),
                                         dtype=torch.long,
                                         device="cuda")
-        self.sampler_indices = torch.empty(self.max_num_batched_tokens,
+        self.sampler_indices = torch.empty((self.max_num_batched_tokens,self.max_olora),
                                            dtype=torch.long,
                                            device="cuda")
-        self.sampler_indices_padded = torch.empty(self.max_num_batched_tokens,
+        self.sampler_indices_padded = torch.empty((self.max_num_batched_tokens,self.max_olora),
                                                   dtype=torch.long,
                                                   device="cuda")
-        self.embeddings_indices = torch.empty(2,
-                                              self.max_num_batched_tokens,
+        self.embeddings_indices = torch.empty((2,
+                                              self.max_num_batched_tokens,self.max_olora),
                                               dtype=torch.long,
                                               device="cuda")
         self.offsets = []
@@ -478,11 +479,31 @@ class LoRAModelManager:
                                     embeddings_indices)
         # Maintain the reference
         self.indices_len[:] = indices_len
+    
+    def _set_lora_mapping(self,mapping:OLoRAMapping)-> None:
+        (base_indices, sampler_indices, sampler_indices_padded,
+         embeddings_indices,
+         indices_len) = convert_olora_mapping(mapping, self.lora_index_to_id,
+                                        self.lora_slots + 1, self.vocab_size,
+                                        self.lora_config.lora_extra_vocab_size)
+        self.base_indices[:base_indices.shape[0],:].copy_(base_indices)
+        self.sampler_indices[:sampler_indices.shape[0],:].copy_(sampler_indices)
+        self.sampler_indices_padded[:sampler_indices_padded.shape[0],:].copy_(
+            sampler_indices_padded)
+        self.embeddings_indices[:embeddings_indices.
+                                shape[0], :embeddings_indices.shape[1],:].copy_(
+                                    embeddings_indices)
+        self.indices_le[:] = indices_len
 
     def set_lora_mapping(self, lora_mapping: LoRAMapping) -> None:
         if self._last_mapping != lora_mapping:
             self._set_lora_mapping(lora_mapping)
         self._last_mapping = lora_mapping
+
+    def set_olora_mapping(self,olora_mapping:OLoRAMapping)->None:
+        if self._last_mapping != olora_mapping:
+            self._set_olora_mapping(olora_mapping)
+        self._last_mapping = olora_mapping
 
     def list_loras(self) -> Dict[int, LoRAModel]:
         """List all registered LoRAModels."""

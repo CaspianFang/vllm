@@ -58,6 +58,48 @@ def _apply_lora(
     add_lora(output, x, lora_a_stacked, lora_b_stacked, indices, 0, 1.0)
     return output.view_as(org_output)
 
+def _apply_olora(
+    x: torch.Tensor,
+    lora_a_stacked: torch.Tensor,
+    lora_b_stacked: torch.Tensor,
+    indices: torch.Tensor,
+    output: torch.Tensor,
+):
+    """Applies lora to each input.
+
+    This method applies all loras to each input. It uses the
+    indices vector to determine which lora yields the
+    correct output. An index of -1 means no lora should be
+    applied. This method adds the final lora results to the
+    output.
+
+    Input shapes:
+        x:               (batch_size, hidden_dim)
+        lora_a_stacked:  (num_loras, lora_rank, hidden_dim)
+        lora_b_stacked:  (num_loras, output_dim, lora_rank)
+        indices:         (batch_size,max_olora)
+        output:          (batch_size, output_dim)
+    """
+    org_output = output
+    x = x.view(-1,x.shape[-1])
+    output = output.view(-1,output.shape[-1])
+    indices = indices.view(-1,indices.shape[-1])
+    output = add_olora(output, x, lora_a_stacked, lora_b_stacked, indices)
+    return output.view_as(org_output)
+
+
+def add_olora(
+    y: torch.Tensor,
+    x: torch.Tensor,
+    wa_t_all:torch.Tensor,
+    wb_t_all: torch.Tensor,
+    indicies: torch.Tensor,
+):
+    for batch_index in range(x.shape[0]):
+        for indicies_index in range(indicies.shape[-1]):
+            if indicies[batch_index][indicies_index] > -1:
+                y[batch_index] += x[batch_index] @ wa_t_all[indicies[batch_index][indicies_index]].squeeze(0).transpose(-1, -2) @ wb_t_all[indicies[batch_index][indicies_index]].squeeze(0).transpose(-1, -2) 
+    return y
 
 def _apply_lora_packed_nslice(
     x: torch.Tensor,
@@ -97,6 +139,45 @@ def _apply_lora_packed_nslice(
                        output_slices[slice_idx])
         offset_left += output_slices[slice_idx]
     return output.view_as(org_output)
+
+
+def _apply_olora_packed_nslice(
+    x: torch.Tensor,
+    lora_a_stacked: Tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+    lora_b_stacked: Tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+    indices: torch.Tensor,
+    output: torch.Tensor,
+    output_slices: Tuple[int, ...],
+):
+    org_output = output
+    x = x.view(-1, x.shape[-1])
+    output = output.view(-1, output.shape[-1])
+    indices = indices.view(-1,indices.shape[-1])
+    offset_left = 0
+    for slice_idx in range(len(output_slices)):
+        output = add_olora_slice(output, x, lora_a_stacked[slice_idx],
+                       lora_b_stacked[slice_idx], indices, 0, 1.0, offset_left,
+                       output_slices[slice_idx])
+        offset_left += output_slices[slice_idx]
+    return output.view_as(org_output)
+
+
+def add_olora_slice(
+    y: torch.Tensor,
+    x: torch.Tensor,
+    wa_t_all: torch.Tensor,
+    wb_t_all: torch.Tensor,
+    indicies: torch.LongTensor,
+    y_offset: int,
+    y_slice_size: int,
+):
+    for batch_index in range(x.shape[0]):
+        for indicies_index in range(indicies.shape[-1]):
+            if indicies[batch_index][indicies_index] > -1:
+                y[batch_index,y_offset:y_offset+y_slice_size] += x[batch_index] @ wa_t_all[indicies[batch_index][indicies_index]].squeeze(0).transpose(-1, -2) @ wb_t_all[indicies[batch_index][indicies_index]].squeeze(0).transpose(-1, -2) 
+    return y
+
+
 
 
 @dataclass
@@ -263,6 +344,7 @@ class VocabParallelEmbeddingWithLoRA(BaseLayerWithLoRA):
         self.indices_len = indices_len
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        print("error with embedding layers")
         added_tokens_mask = x > self.base_layer.org_vocab_size - 1
         indices = self.embeddings_indices[1][:self.indices_len[3]].view_as(x)
         full_lora_a_embeddings = F.embedding(
@@ -353,7 +435,7 @@ class ColumnParallelLinearWithLoRA(BaseLayerWithLoRA):
                       bias: Optional[torch.Tensor]) -> torch.Tensor:
         output = self.base_layer.linear_method.apply_weights(
             self.base_layer.linear_weights, x, bias)
-        _apply_lora(
+        _apply_olora(
             x,
             self.lora_a_stacked,
             self.lora_b_stacked,
@@ -482,7 +564,7 @@ class MergedColumnParallelLinearWithLoRA(ColumnParallelLinearWithLoRA):
                       bias: Optional[torch.Tensor]) -> torch.Tensor:
         output = self.base_layer.linear_method.apply_weights(
             self.base_layer.linear_weights, x, bias)
-        _apply_lora_packed_nslice(
+        _apply_olora_packed_nslice(
             x,
             self.lora_a_stacked,
             self.lora_b_stacked,
@@ -651,7 +733,7 @@ class QKVParallelLinearWithLora(ColumnParallelLinearWithLoRA):
                       bias: Optional[torch.Tensor]) -> torch.Tensor:
         output = self.base_layer.linear_method.apply_weights(
             self.base_layer.linear_weights, x, bias)
-        _apply_lora_packed_nslice(
+        _apply_olora_packed_nslice(
             x,
             self.lora_a_stacked,
             self.lora_b_stacked,
@@ -736,7 +818,7 @@ class RowParallelLinearWithLoRA(BaseLayerWithLoRA):
     def apply_weights(self, x: torch.Tensor) -> torch.Tensor:
         output = self.base_layer.linear_method.apply_weights(
             self.base_layer.linear_weights, x)
-        _apply_lora(
+        _apply_olora(
             x,
             self.lora_a_stacked,
             self.lora_b_stacked,
@@ -902,6 +984,9 @@ class SamplerWithLoRA(BaseLayerWithLoRA):
         embedding_bias: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         # Get the logits for the next tokens.
+
+        print("error in sampler")
+
         logits = torch.matmul(hidden_states, embedding.t())
         if embedding_bias is not None:
             logits += embedding_bias

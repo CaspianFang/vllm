@@ -1,9 +1,17 @@
-olora_requests = [[(2,"str2"),(3,"str3"),(4,"str4")],[(1,"str1"),(2,"str2"),(3,"str3")]]
-loras_map = {
-            lora_request[0]: lora_request[1]
-            for olora_request in olora_requests if olora_request
-            for lora_request in olora_request
-        }
-print(loras_map)
-a = set(loras_map)
-print(set(loras_map))
+import torch
+
+x = torch.rand(3,5)
+w_a = torch.rand(5,1,2,5)
+w_b = torch.rand(5,1,4,2)
+indeices = torch.tensor([[2,3],[0,4],[1,3]])
+
+
+y = torch.rand(3,4)
+
+print(y)
+
+for batch_index in range(x.shape[0]):
+        for indicies_index in range(indeices.shape[-1]):
+            if (indeices[batch_index][indicies_index] > -1):
+                y[batch_index] += x[batch_index] @ (w_a[indeices[batch_index][indicies_index]].squeeze().transpose(-1, -2) @ w_b[indeices[batch_index][indicies_index]].squeeze().transpose(-1, -2))
+print(y)

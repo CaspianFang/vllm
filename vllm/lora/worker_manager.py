@@ -111,7 +111,7 @@ class WorkerLoRAManager(WorkerLoRAManager):
         self._apply_loras(lora_requests)
         self._lora_manager.set_lora_mapping(lora_mapping)
 
-    def set_activate_aloras(self, olora_requests: List[OLoRARequest],
+    def set_activate_oloras(self, olora_requests: List[OLoRARequest],
                          lora_mapping: OLoRAMapping) -> None:
         self._apply_oloras(olora_requests)
         self._lora_manager.set_olora_mapping(lora_mapping)
