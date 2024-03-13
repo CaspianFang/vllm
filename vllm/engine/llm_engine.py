@@ -576,7 +576,10 @@ class LLMEngine:
         """Gets the statistics of the engine for scheduling,
         including waiting requests, running requests, swapped requests,
         current loras, and num of free blocks in gpu and cpu, current running mode, etc."""
-        return self.scheduler.get_stats()
+        running_mode_list_for_workers = [worker.model_runner.lora_manager.current_running_mode for worker in self.workers]
+        stats = self.scheduler.get_stats()
+        stats["current_running_modes"] = running_mode_list_for_workers
+        return stats
 
     def _check_beam_search_early_stopping(
         self,
