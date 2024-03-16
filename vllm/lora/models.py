@@ -14,7 +14,9 @@ from torch import nn
 from vllm.config import LoRAConfig
 from vllm.utils import LRUCache, in_wsl
 
-from vllm.lora.layers import BaseLayerWithLoRA, LoRAMapping, from_layer, from_layer_sampler,OLoRAMapping
+from vllm.lora.layers import BaseLayerWithLoRA, LoRAMapping, from_layer, from_layer_sampler,OLoRAMapping,VocabParallelEmbeddingWithLoRA,SamplerWithLoRA
+from vllm.model_executor.layers.sampler import Sampler
+from vllm.model_executor.layers.vocab_parallel_embedding import VocabParallelEmbedding
 from vllm.lora.lora import LoRALayerWeights, PackedLoRALayerWeights
 from vllm.lora.utils import parse_fine_tuned_lora_name, replace_submodule
 
@@ -39,8 +41,8 @@ TARGET_MODULES_QKV = [
     "o_proj",
     "gate_up_proj",
     "down_proj",
-    "embed_tokens",
-    "lm_head",
+    # "embed_tokens",
+    # "lm_head",
 ]
 
 EMBEDDING_MODULES = {
@@ -142,17 +144,18 @@ def convert_olora_mapping(
     ]
     lora_idx = None
     for i in range(len(indices)):
-        for j in range(len(i)):
+        for j in range(len(indices[i])):
         # TODO index can be slow. optimize
             lora_idx = (lora_index_to_id.index(indices[i][j])
                         if indices[i][j] > 0 else -1)
             embedding_indices[i][j] = lora_idx if indices[i][j] > 0 else 0
             indices[i][j] = i
             lora_indices[i][j] = lora_idx
-
+    
     indices = torch.tensor([indices, lora_indices, embedding_indices],
                            dtype=torch.long,
                            device="cuda")
+
     prompt_mapping = torch.tensor(prompt_mapping,
                                   device="cuda",
                                   dtype=torch.long)
@@ -160,6 +163,7 @@ def convert_olora_mapping(
         indices[2] * extra_vocab_size,
         indices[2] * (vocab_size + extra_vocab_size)
     ])
+
     embeddings_indices[embeddings_indices == -1] = max_loras - 1
     base_indices = indices[1]
     sampler_indices = prompt_mapping
@@ -480,12 +484,13 @@ class LoRAModelManager:
         # Maintain the reference
         self.indices_len[:] = indices_len
     
-    def _set_lora_mapping(self,mapping:OLoRAMapping)-> None:
+    def _set_olora_mapping(self,mapping:OLoRAMapping)-> None:
+        print(self.max_olora)
         (base_indices, sampler_indices, sampler_indices_padded,
          embeddings_indices,
          indices_len) = convert_olora_mapping(mapping, self.lora_index_to_id,
                                         self.lora_slots + 1, self.vocab_size,
-                                        self.lora_config.lora_extra_vocab_size)
+                                        self.lora_config.lora_extra_vocab_size,self.max_olora)
         self.base_indices[:base_indices.shape[0],:].copy_(base_indices)
         self.sampler_indices[:sampler_indices.shape[0],:].copy_(sampler_indices)
         self.sampler_indices_padded[:sampler_indices_padded.shape[0],:].copy_(
@@ -493,7 +498,7 @@ class LoRAModelManager:
         self.embeddings_indices[:embeddings_indices.
                                 shape[0], :embeddings_indices.shape[1],:].copy_(
                                     embeddings_indices)
-        self.indices_le[:] = indices_len
+        self.indices_len[:] = indices_len
 
     def set_lora_mapping(self, lora_mapping: LoRAMapping) -> None:
         if self._last_mapping != lora_mapping:
@@ -547,13 +552,17 @@ class LoRAModelManager:
     def create_dummy_lora(self, lora_id: int, rank: int) -> LoRAModel:
         """Create zero-initialized LoRAModel for warmup."""
         model = LoRAModel(lora_id, rank, {})
+       
+        
         for module_name, module in self.model.named_modules():
-            if not self._match_target_modules(module_name) or not isinstance(
-                    module, BaseLayerWithLoRA):
+            if not self._match_target_modules(module_name): #or not isinstance(
+                    # module, BaseLayerWithLoRA):
                 continue
             parts = module_name.split(".")
             if module_name not in self.packed_modules:
                 if parts[-1] in EMBEDDING_MODULES:
+                    #print(module_name)
+                    #continue
                     input_dim = (module.base_layer.org_vocab_size +
                                  self.lora_config.lora_extra_vocab_size if
                                  hasattr(module.base_layer, "org_vocab_size")

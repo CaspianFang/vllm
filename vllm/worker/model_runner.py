@@ -141,7 +141,6 @@ class ModelRunner:
 
             if len(lora_id) > 0:
                 lora_requests.add(seq_group_metadata.olora_request)
-
             lora_index_mapping.append([lora_id] * prompt_len)
             lora_prompt_mapping.extend(
                 [lora_id] *
@@ -568,9 +567,10 @@ class ModelRunner:
                     lora_int_id=lora_id,
                     lora_local_path="/not/a/real/path",
                 )
+                dummy_olora_request = OLoRARequest([f"warmup_{lora_id}"],[lora_id],["/not/a/real/path"],idx,[dummy_lora_request])
                 self.lora_manager.add_dummy_lora(dummy_lora_request,
                                                  rank=LORA_WARMUP_RANK)
-                dummy_lora_requests.append(dummy_lora_request)
+                dummy_lora_requests.append(dummy_olora_request)
             dummy_lora_requests_per_seq = [
                 dummy_lora_requests[idx % len(dummy_lora_requests)]
                 for idx in range(max_num_seqs)
@@ -589,7 +589,7 @@ class ModelRunner:
                 seq_data={group_id: seq_data},
                 sampling_params=sampling_params,
                 block_tables=None,
-                lora_request=dummy_lora_requests_per_seq[group_id]
+                olora_request=dummy_lora_requests_per_seq[group_id]
                 if dummy_lora_requests_per_seq else None,
             )
             seqs.append(seq)
@@ -615,7 +615,7 @@ class ModelRunner:
     def set_active_oloras(self,olora_requests:List[OLoRARequest],olora_mapping:OLoRAMapping)-> None:
         if not self.lora_manager:
             raise RuntimeError("LoRA is not enabled.")
-        self.lora_manager.set_active_loras(olora_requests, olora_mapping)
+        self.lora_manager.set_active_oloras(olora_requests, olora_mapping)
 
     def add_lora(self, lora_request: LoRARequest) -> bool:
         if not self.lora_manager:
@@ -682,10 +682,10 @@ class ModelRunner:
 
                 if self.lora_config:
                     lora_mapping = LoRAMapping(
-                        [0] * batch_size,
-                        [0] * batch_size,
+                        [[]] * batch_size,
+                        [[]] * batch_size,
                     )
-                    self.set_active_loras(set(), lora_mapping)
+                    self.set_active_oloras(set(), lora_mapping)
 
                 graph_runner = CUDAGraphRunner(self.model)
                 graph_runner.capture(
@@ -790,7 +790,7 @@ def _pad_to_max(x: List[int], max_len: int, pad: int) -> List[int]:
     return x + [pad] * (max_len - len(x))
 
 def _make_list_with_pad(x:List[List[int]],max_len:int,pad:List[int])->List[int]:
-    assert len(x)<max_len
+    assert len(x)<=max_len
     return x + [pad] * (max_len - len(x)) 
 
 def _make_tensor_with_pad(

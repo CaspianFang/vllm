@@ -156,7 +156,7 @@ def _apply_olora_packed_nslice(
     offset_left = 0
     for slice_idx in range(len(output_slices)):
         output = add_olora_slice(output, x, lora_a_stacked[slice_idx],
-                       lora_b_stacked[slice_idx], indices, 0, 1.0, offset_left,
+                       lora_b_stacked[slice_idx], indices, offset_left,
                        output_slices[slice_idx])
         offset_left += output_slices[slice_idx]
     return output.view_as(org_output)
@@ -345,8 +345,14 @@ class VocabParallelEmbeddingWithLoRA(BaseLayerWithLoRA):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         print("error with embedding layers")
+        print(x.shape)
+        print(self.embeddings_indices.shape)
         added_tokens_mask = x > self.base_layer.org_vocab_size - 1
-        indices = self.embeddings_indices[1][:self.indices_len[3]].view_as(x)
+        indices = self.embeddings_indices[1][:self.indices_len[3]].view_as((x.shape[0],x.shape[1],self.embeddings_indices[1].shape[-1]))    # 32 * 64 * 10    lora_a :  max_loras *  all_vocab * r_max
+        for  j in range (indices.shape[-1]):
+            full_lora_a_embeddings += F.embedding(
+                x + indices[:,:,j]
+            )
         full_lora_a_embeddings = F.embedding(
             x + indices,
             self.lora_a_stacked_2d,

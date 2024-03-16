@@ -118,11 +118,15 @@ class TokenizerGroup:
         self.tokenizer = get_tokenizer(self.tokenizer_id, **tokenizer_config)
         if enable_lora:
             self.lora_tokenizers = LRUCache(capacity=max_num_seqs)
-        elif enable_olora:
-            self.olora_tokenizers = LRUCache(capacity=max_num_seqs)
         else:
             self.lora_tokenizers = None
+            
+        if enable_olora:
+            self.olora_tokenizers = LRUCache(capacity=max_num_seqs)
+        else:
             self.olora_tokenizers = None
+        
+
 
     def encode(self,
                prompt: str,
@@ -168,10 +172,10 @@ class TokenizerGroup:
             olora_request: Optional[OLoRARequest]) -> "PreTrainedTokenizer":
         if not olora_request or not self.enable_lora:
             return self.tokenizer
-        if olora_request.lora_int_id not in self.olora_tokenizers:
+        if olora_request.self_id not in self.olora_tokenizers:
             tokenizer = (get_olora_tokenizer(
                 olora_request, **self.tokenizer_config) or self.tokenizer)
-            self.olora_tokenizers.put(olora_request.lora_int_id, tokenizer)
+            self.olora_tokenizers.put(olora_request.self_id, tokenizer)
             return tokenizer
 
     async def get_lora_tokenizer_async(

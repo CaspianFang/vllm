@@ -121,7 +121,7 @@ class Worker:
 
         # Execute a forward pass with dummy inputs to profile the memory usage
         # of the model.
-        self.model_runner.profile_run()
+        self.model_runner.profile_run()   
 
         # Calculate the number of blocks that can be allocated with the
         # profiled peak memory.
@@ -233,6 +233,10 @@ class Worker:
 
     def remove_lora(self, lora_id: int) -> bool:
         return self.model_runner.remove_lora(lora_id)
+    
+    def remove_olora(self,olora_id:int)->bool:
+        return self.model_runner.remove_lora(olora_id)
+
 
     def list_loras(self) -> Set[int]:
         return self.model_runner.list_loras()

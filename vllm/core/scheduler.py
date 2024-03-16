@@ -232,8 +232,8 @@ class Scheduler:
             num_curr_seqs = sum(seq_group.get_max_num_running_seqs()
                                 for seq_group in self.running)
             curr_loras = set(
-                seq_group.lora_int_id
-                for seq_group in self.running) if self.lora_enabled else None
+                [ id  for seq_group in self.running for id  in seq_group.olora_int_ids ]
+                ) if self.lora_enabled else None
             seq_lens: List[int] = []
 
             # Optimization: We do not sort the waiting queue since the preempted
@@ -272,10 +272,10 @@ class Scheduler:
                     self.waiting.popleft()
                     continue
 
-                lora_int_id = 0
+                lora_int_ids = []
                 if self.lora_enabled:
-                    lora_int_id = seq_group.lora_int_id
-                    if lora_int_id > 0 and lora_int_id not in curr_loras and len(
+                    lora_int_ids = seq_group.olora_int_ids
+                    if len(lora_int_ids) > 0 and  any([bool(id not in curr_loras and id > 0) for id in lora_int_ids])  and len(
                             curr_loras) >= self.lora_config.max_loras:
                         # We don't have a space for another LoRA, so
                         # we ignore this request for now.
@@ -302,8 +302,9 @@ class Scheduler:
                     break
                 seq_lens = new_seq_lens
 
-                if lora_int_id > 0:
-                    curr_loras.add(lora_int_id)
+                for lora_int_id in lora_int_ids:
+                    if lora_int_id > 0:
+                        curr_loras.add(lora_int_id)
                 self.waiting.popleft()
                 self._allocate(seq_group)
                 self.running.append(seq_group)
