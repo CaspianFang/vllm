@@ -14,8 +14,8 @@ from vllm.model_executor.parallel_utils import custom_all_reduce
 from vllm.sampling_params import SamplingParams, SamplingType
 from vllm.sequence import SamplerOutput, SequenceData, SequenceGroupMetadata
 from vllm.lora.worker_manager import LRUCacheWorkerLoRAManager
-from vllm.lora.layers import LoRAMapping
-from vllm.lora.request import LoRARequest
+from vllm.lora.layers import LoRAMapping,OLoRAMapping
+from vllm.lora.request import LoRARequest, OLoRARequest
 from vllm.utils import in_wsl
 
 logger = init_logger(__name__)
@@ -96,14 +96,14 @@ class ModelRunner:
         self,
         seq_group_metadata_list: List[SequenceGroupMetadata],
     ) -> Tuple[torch.Tensor, torch.Tensor, InputMetadata, List[int], List[int],
-               List[int], List[int], Set[LoRARequest]]:
+               List[List[List[int]]], List[List[int]], Set[OLoRARequest]]:
         assert len(seq_group_metadata_list) > 0
         input_tokens: List[List[int]] = []
         input_positions: List[List[int]] = []
         slot_mapping: List[List[int]] = []
-        lora_index_mapping: List[int] = []
-        lora_prompt_mapping: List[int] = []
-        lora_requests: Set[LoRARequest] = set()
+        lora_index_mapping: List[List[List[int]]] = []
+        lora_prompt_mapping: List[List[int]] = []
+        lora_requests: Set[OLoRARequest] = set()
 
         prompt_lens: List[int] = []
         context_lens: List[int] = []
@@ -137,11 +137,10 @@ class ModelRunner:
             input_positions.append(
                 list(range(prefix_len, prefix_len + len(prompt_tokens))))
 
-            lora_id = seq_group_metadata.lora_int_id
+            lora_id = seq_group_metadata.olora_int_ids
 
-            if lora_id > 0:
-                lora_requests.add(seq_group_metadata.lora_request)
-
+            if len(lora_id) > 0:
+                lora_requests.add(seq_group_metadata.olora_request)
             lora_index_mapping.append([lora_id] * prompt_len)
             lora_prompt_mapping.extend(
                 [lora_id] *
@@ -192,7 +191,7 @@ class ModelRunner:
                                              pad=_PAD_SLOT_ID,
                                              dtype=torch.long)
         lora_index_mapping = [
-            _pad_to_max(mapping, max_prompt_len, pad=0)
+            _make_list_with_pad(mapping, max_prompt_len, pad=[])
             for mapping in lora_index_mapping
         ]
         context_lens_tensor = torch.tensor(context_lens,
@@ -235,25 +234,25 @@ class ModelRunner:
         self,
         seq_group_metadata_list: List[SequenceGroupMetadata],
     ) -> Tuple[torch.Tensor, torch.Tensor, InputMetadata, List[int], List[int],
-               Set[LoRARequest]]:
+               Set[OLoRARequest]]:
         assert len(seq_group_metadata_list) > 0
         input_tokens: List[List[int]] = []
         input_positions: List[List[int]] = []
         slot_mapping: List[List[int]] = []
         context_lens: List[int] = []
         block_tables: List[List[int]] = []
-        lora_index_mapping: List[int] = []
-        lora_prompt_mapping: List[int] = []
-        lora_requests: Set[LoRARequest] = set()
+        lora_index_mapping: List[ List[ List[int] ] ]= []
+        lora_prompt_mapping:List[List[int]]= []
+        lora_requests: Set[OLoRARequest] = set()
 
         for seq_group_metadata in seq_group_metadata_list:
             assert not seq_group_metadata.is_prompt
 
             seq_ids = list(seq_group_metadata.seq_data.keys())
-            lora_id = seq_group_metadata.lora_int_id
+            lora_id = seq_group_metadata.olora_int_ids
 
-            if lora_id > 0:
-                lora_requests.add(seq_group_metadata.lora_request)
+            if len(lora_id) > 0:
+                lora_requests.add(seq_group_metadata.olora_request)
 
             for seq_id in seq_ids:
                 seq_data = seq_group_metadata.seq_data[seq_id]
@@ -340,7 +339,7 @@ class ModelRunner:
             )
 
         lora_index_mapping = [
-            _pad_to_max(mapping, 1, pad=0) for mapping in lora_index_mapping
+            _make_list_with_pad(mapping, 1, pad=[]) for mapping in lora_index_mapping
         ]
 
         input_metadata = InputMetadata(
@@ -442,11 +441,11 @@ class ModelRunner:
             if is_prompt:
                 (input_tokens, input_positions, input_metadata, prompt_lens,
                  subquery_lens, lora_index_mapping, lora_prompt_mapping,
-                 lora_requests) = self._prepare_prompt(seq_group_metadata_list)
+                 olora_requests) = self._prepare_prompt(seq_group_metadata_list)
             else:
                 (input_tokens, input_positions, input_metadata,
                  lora_index_mapping, lora_prompt_mapping,
-                 lora_requests) = self._prepare_decode(seq_group_metadata_list)
+                 olora_requests) = self._prepare_decode(seq_group_metadata_list)
                 prompt_lens = []
                 subquery_lens = None
             sampling_metadata = self._prepare_sample(seq_group_metadata_list,
@@ -457,12 +456,12 @@ class ModelRunner:
                 flat_lora_index_mapping = [
                     item for sublist in lora_index_mapping for item in sublist
                 ]
-                lora_mapping = LoRAMapping(
+                olora_mapping = OLoRAMapping(
                     flat_lora_index_mapping,
                     lora_prompt_mapping,
                 )
             else:
-                lora_mapping = None
+                olora_mapping = None
 
             # Broadcast the metadata.
             metadata_dict = {
@@ -480,16 +479,16 @@ class ModelRunner:
                 "kv_cache_dtype": input_metadata.kv_cache_dtype,
                 "selected_token_indices":
                 sampling_metadata.selected_token_indices,
-                "lora_requests": lora_requests,
-                "lora_mapping": lora_mapping,
+                "lora_requests": olora_requests,
+                "lora_mapping": olora_mapping,
             }
             broadcast_tensor_dict(metadata_dict, src=0)
         else:
             metadata_dict = broadcast_tensor_dict(src=0)
             input_tokens = metadata_dict["input_tokens"]
             input_positions = metadata_dict["input_positions"]
-            lora_mapping = metadata_dict["lora_mapping"]
-            lora_requests = metadata_dict["lora_requests"]
+            olora_mapping = metadata_dict["lora_mapping"]
+            olora_requests = metadata_dict["lora_requests"]
             input_metadata = InputMetadata(
                 is_prompt=metadata_dict["is_prompt"],
                 slot_mapping=metadata_dict["slot_mapping"],
@@ -511,7 +510,7 @@ class ModelRunner:
                 perform_sampling=False,
             )
 
-        return input_tokens, input_positions, input_metadata, sampling_metadata, lora_requests, lora_mapping
+        return input_tokens, input_positions, input_metadata, sampling_metadata, olora_requests, olora_mapping
 
     @torch.inference_mode()
     def execute_model(
@@ -519,11 +518,12 @@ class ModelRunner:
         seq_group_metadata_list: Optional[List[SequenceGroupMetadata]],
         kv_caches: List[Tuple[torch.Tensor, torch.Tensor]],
     ) -> Optional[SamplerOutput]:
-        input_tokens, input_positions, input_metadata, sampling_metadata, lora_requests, lora_mapping = (
+        input_tokens, input_positions, input_metadata, sampling_metadata, olora_requests, olora_mapping = (
             self.prepare_input_tensors(seq_group_metadata_list))
 
         if self.lora_config:
-            self.set_active_loras(lora_requests, lora_mapping)
+            #self.set_active_loras(lora_requests, lora_mapping)
+            self.set_active_oloras(list(olora_requests), olora_mapping)
 
         # Execute the model.
         if input_metadata.use_cuda_graph:
@@ -567,9 +567,10 @@ class ModelRunner:
                     lora_int_id=lora_id,
                     lora_local_path="/not/a/real/path",
                 )
+                dummy_olora_request = OLoRARequest([f"warmup_{lora_id}"],[lora_id],["/not/a/real/path"],idx,[dummy_lora_request])
                 self.lora_manager.add_dummy_lora(dummy_lora_request,
                                                  rank=LORA_WARMUP_RANK)
-                dummy_lora_requests.append(dummy_lora_request)
+                dummy_lora_requests.append(dummy_olora_request)
             dummy_lora_requests_per_seq = [
                 dummy_lora_requests[idx % len(dummy_lora_requests)]
                 for idx in range(max_num_seqs)
@@ -588,7 +589,7 @@ class ModelRunner:
                 seq_data={group_id: seq_data},
                 sampling_params=sampling_params,
                 block_tables=None,
-                lora_request=dummy_lora_requests_per_seq[group_id]
+                olora_request=dummy_lora_requests_per_seq[group_id]
                 if dummy_lora_requests_per_seq else None,
             )
             seqs.append(seq)
@@ -610,6 +611,11 @@ class ModelRunner:
         if not self.lora_manager:
             raise RuntimeError("LoRA is not enabled.")
         self.lora_manager.set_active_loras(lora_requests, lora_mapping)
+    
+    def set_active_oloras(self,olora_requests:List[OLoRARequest],olora_mapping:OLoRAMapping)-> None:
+        if not self.lora_manager:
+            raise RuntimeError("LoRA is not enabled.")
+        self.lora_manager.set_active_oloras(olora_requests, olora_mapping)
 
     def add_lora(self, lora_request: LoRARequest) -> bool:
         if not self.lora_manager:
@@ -673,8 +679,15 @@ class ModelRunner:
                     use_cuda_graph=True,
                     kv_cache_dtype=self.kv_cache_dtype,
                 )
-
-                if self.lora_config:
+                
+                # caesar and hqf
+                if self.lora_config and bool(self.lora_config.enable_olora):
+                    lora_mapping = OLoRAMapping(
+                        [[]] * batch_size,
+                        [[]] * batch_size,
+                    )
+                    self.set_active_oloras(set(), lora_mapping)
+                elif self.lora_config and bool (not self.lora_config.enable_olora):
                     lora_mapping = LoRAMapping(
                         [0] * batch_size,
                         [0] * batch_size,
@@ -783,6 +796,9 @@ def _pad_to_max(x: List[int], max_len: int, pad: int) -> List[int]:
     assert len(x) <= max_len
     return x + [pad] * (max_len - len(x))
 
+def _make_list_with_pad(x:List[List[int]],max_len:int,pad:List[int])->List[int]:
+    assert len(x)<=max_len
+    return x + [pad] * (max_len - len(x)) 
 
 def _make_tensor_with_pad(
     x: List[List[int]],

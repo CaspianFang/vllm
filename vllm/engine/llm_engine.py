@@ -86,7 +86,7 @@ class LLMEngine:
             f"quantization={model_config.quantization}, "
             f"enforce_eager={model_config.enforce_eager}, "
             f"kv_cache_dtype={cache_config.cache_dtype}, "
-            f"seed={model_config.seed})"
+            f"seed={model_config.seed})")
         # TODO(woosuk): Print more configs in debug mode.
 
         self.model_config = model_config
@@ -159,7 +159,8 @@ class LLMEngine:
 
     def _init_tokenizer(self, **tokenizer_init_kwargs):
         init_kwargs = dict(
-            enable_lora=bool(self.lora_config),
+            enable_lora=bool(self.lora_config) and bool(not self.lora_config.enable_olora),
+            enable_olora = bool(self.lora_config) and bool(self.lora_config.enable_olora),
             max_num_seqs=self.scheduler_config.max_num_seqs,
             max_input_length=None,
             tokenizer_mode=self.model_config.tokenizer_mode,
@@ -598,12 +599,12 @@ class LLMEngine:
 
         current_worst_score = (current_worst_seq.get_beam_search_score(
             length_penalty=length_penalty,
-            eos_token_id=self.get_tokenizer_for_seq(
+            eos_token_id=self.get_olora_tokenizer_for_seq(    # change to olora
                 current_worst_seq).eos_token_id))
         if early_stopping is False:
             highest_attainable_score = (best_running_seq.get_beam_search_score(
                 length_penalty=length_penalty,
-                eos_token_id=self.get_tokenizer_for_seq(
+                eos_token_id=self.get_olora_tokenizer_for_seq(
                     best_running_seq).eos_token_id))
         else:
             assert early_stopping == "never"
@@ -618,7 +619,7 @@ class LLMEngine:
                 highest_attainable_score = (
                     best_running_seq.get_beam_search_score(
                         length_penalty=length_penalty,
-                        eos_token_id=self.get_tokenizer_for_seq(
+                        eos_token_id=self.get_olora_tokenizer_for_seq(
                             best_running_seq).eos_token_id,
                         seq_len=max_possible_length))
             else:
@@ -628,7 +629,7 @@ class LLMEngine:
                 highest_attainable_score = (
                     best_running_seq.get_beam_search_score(
                         length_penalty=length_penalty,
-                        eos_token_id=self.get_tokenizer_for_seq(
+                        eos_token_id=self.get_olora_tokenizer_for_seq(
                             best_running_seq).eos_token_id))
         return current_worst_score >= highest_attainable_score
 
@@ -720,7 +721,7 @@ class LLMEngine:
         # Sort the finished sequences by their scores.
         all_finished_seqs.sort(key=lambda x: x[0].get_beam_search_score(
             length_penalty=length_penalty,
-            eos_token_id=self.get_tokenizer_for_seq(x[0]).eos_token_id),
+            eos_token_id=self.get_olora_tokenizer_for_seq(x[0]).eos_token_id),
                                reverse=True)
         for seq, parent, is_new in all_finished_seqs[:beam_width]:
             if is_new:
@@ -748,7 +749,7 @@ class LLMEngine:
         # Sort the running sequences by their scores.
         running_child_seqs.sort(key=lambda x: x[0].get_beam_search_score(
             length_penalty=length_penalty,
-            eos_token_id=self.get_tokenizer_for_seq(x[0]).eos_token_id),
+            eos_token_id=self.get_olora_tokenizer_for_seq(x[0]).eos_token_id),
                                 reverse=True)
 
         # Check if we can stop the beam search.
@@ -985,15 +986,15 @@ class LLMEngine:
     def _decode_sequence(self, seq: Sequence, prms: SamplingParams) -> None:
         """Decodes the new token for a sequence."""
         (new_tokens, new_output_text, prefix_offset,
-         read_offset) = detokenize_incrementally(
-             self.get_tokenizer_for_seq(seq),
-             all_input_ids=seq.get_token_ids(),
-             prev_tokens=seq.tokens,
-             prefix_offset=seq.prefix_offset,
-             read_offset=seq.read_offset,
-             skip_special_tokens=prms.skip_special_tokens,
-             spaces_between_special_tokens=prms.spaces_between_special_tokens,
-         )
+        read_offset) = detokenize_incrementally(
+            self.get_olora_tokenizer_for_seq(seq),
+            all_input_ids=seq.get_token_ids(),
+            prev_tokens=seq.tokens,
+            prefix_offset=seq.prefix_offset,
+            read_offset=seq.read_offset,
+            skip_special_tokens=prms.skip_special_tokens,
+            spaces_between_special_tokens=prms.spaces_between_special_tokens,
+        )
         if seq.tokens is None:
             seq.tokens = new_tokens
         else:
@@ -1029,7 +1030,7 @@ class LLMEngine:
 
         # Check if the sequence has generated the EOS token.
         if ((not sampling_params.ignore_eos) and seq.get_last_token_id()
-                == self.get_tokenizer_for_seq(seq).eos_token_id):
+                == self.get_olora_tokenizer_for_seq(seq).eos_token_id):
             seq.status = SequenceStatus.FINISHED_STOPPED
             return
 
@@ -1060,8 +1061,7 @@ class LLMEngine:
         )
     
     def remove_olora(self, lora_id: int) -> bool:
-        for _id in olora_request.lora_int_id:
-            assert _id > 0, "lora_id must be greater than 0."
+        assert lora_id > 0, "lora_id must be greater than 0."
 
         return self._run_workers(
             "remove_olora",

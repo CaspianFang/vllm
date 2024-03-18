@@ -26,7 +26,7 @@ class EngineArgs:
     max_parallel_loading_workers: Optional[int] = None
     block_size: int = 16
     swap_space: int = 4  # GiB
-    gpu_memory_utilization: float = 0.90
+    gpu_memory_utilization: float = 0.80
     max_num_batched_tokens: Optional[int] = None
     max_num_seqs: int = 256
     max_paddings: int = 256
@@ -294,6 +294,7 @@ class EngineArgs:
             max_loras=self.max_loras,
             lora_extra_vocab_size=self.lora_extra_vocab_size,
             lora_dtype=self.lora_dtype,
+            enable_olora=self.enable_lora,
             max_cpu_loras=self.max_cpu_loras if self.max_cpu_loras
             and self.max_cpu_loras > 0 else None) if self.enable_lora else None
         return model_config, cache_config, parallel_config, scheduler_config, lora_config

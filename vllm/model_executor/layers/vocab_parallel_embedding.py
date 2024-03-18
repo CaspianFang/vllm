@@ -91,7 +91,8 @@ class VocabParallelEmbedding(torch.nn.Module):
                                       vocab_end_index]
         param[:loaded_weight.shape[0]].data.copy_(loaded_weight)
 
-    def forward(self, input_):
+    def forward(self, input_): # batch_size  * seq_len    
+        #print(input_.shape)
         if self.tp_size > 1:
             # Build the mask.
             input_mask = ((input_ < self.vocab_start_index) |

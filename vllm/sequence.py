@@ -288,7 +288,7 @@ class SequenceGroup:
 
     @property
     def olora_int_ids(self) -> List[int]:
-        return self.olora_request.olora_int_ids if self.olora_request else 0
+        return self.olora_request.olora_int_ids if self.olora_request else []
 
     def get_max_num_running_seqs(self) -> int:
         """The maximum number of sequences running in parallel in the remaining
@@ -402,7 +402,7 @@ class SequenceGroupMetadata:
     
     @property
     def olora_int_ids(self) -> List[int]:
-        return self.olora_request.olora_int_ids if self.olora_request else 0
+        return self.olora_request.olora_int_ids if self.olora_request else []
 
 
 class SequenceOutput:
