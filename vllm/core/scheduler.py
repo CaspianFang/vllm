@@ -6,7 +6,7 @@ from typing import Deque, Dict, Iterable, List, Optional, Tuple, Union, Set
 from vllm.config import CacheConfig, LoRAConfig, SchedulerConfig
 from vllm.core.block_manager import AllocStatus, BlockSpaceManager
 from vllm.core.policy import PolicyFactory
-from vllm.lora.request import LoRARequest
+from vllm.lora.request import LoRARequest, OLoRARequest
 from vllm.logger import init_logger
 from vllm.sequence import (Sequence, SequenceData, SequenceGroup,
                            SequenceGroupMetadata, SequenceStatus)
@@ -50,9 +50,9 @@ class SchedulerOutputs:
         assert not (blocks_to_swap_in and blocks_to_swap_out)
         self.ignored_seq_groups = ignored_seq_groups
 
-        self.num_loras = len(self.lora_requests)
+        self.num_loras = len(self.olora_requests)
         if self.num_loras > 0:
-            self._sort_by_lora_ids()
+            self._sort_by_olora_ids()
 
     def is_empty(self) -> bool:
         # NOTE: We do not consider the ignored sequence groups.
@@ -64,10 +64,21 @@ class SchedulerOutputs:
             self.scheduled_seq_groups,
             key=lambda g: (g.lora_request.lora_int_id
                            if g.lora_request else 0, g.request_id))
+        
+    def _sort_by_olora_ids(self)->bool:
+        self.scheduled_seq_groups = sorted(
+            self.scheduled_seq_groups,
+            key=lambda g: (g.olora_request.self_id if g.olora_request else 0,g.request_id)
+        )
+
 
     @property
     def lora_requests(self) -> Set[LoRARequest]:
         return {g.lora_request for g in self.scheduled_seq_groups}
+    
+    @property
+    def olora_requests(self)-> Set[OLoRARequest]:
+        return {g.olora_request for g in self.scheduled_seq_groups   }
 
 
 class Scheduler:
@@ -403,8 +414,8 @@ class Scheduler:
             num_curr_seqs = sum(seq_group.get_max_num_running_seqs()
                                 for seq_group in self.running)
             curr_loras = set(
-                seq_group.lora_int_id
-                for seq_group in self.running) if self.lora_enabled else None
+                [ id  for seq_group in self.running for id  in seq_group.olora_int_ids ]
+                ) if self.lora_enabled else None
 
             leftover_swapped = deque()
 

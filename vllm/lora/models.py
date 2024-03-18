@@ -485,7 +485,7 @@ class LoRAModelManager:
         self.indices_len[:] = indices_len
     
     def _set_olora_mapping(self,mapping:OLoRAMapping)-> None:
-        print(self.max_olora)
+
         (base_indices, sampler_indices, sampler_indices_padded,
          embeddings_indices,
          indices_len) = convert_olora_mapping(mapping, self.lora_index_to_id,
