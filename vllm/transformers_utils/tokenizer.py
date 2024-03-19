@@ -118,17 +118,15 @@ class TokenizerGroup:
         self.tokenizer = get_tokenizer(self.tokenizer_id, **tokenizer_config)
 
         assert enable_lora is False or enable_olora is False
-        
-        if enable_lora:
-            self.lora_tokenizers = LRUCache(capacity=max_num_seqs)
-        else:
-            self.lora_tokenizers = None
-            
         if enable_olora:
             self.olora_tokenizers = LRUCache(capacity=max_num_seqs)
-        else:
+            self.lora_tokenizers = None
+        elif enable_lora:
+            self.lora_tokenizers = LRUCache(capacity=max_num_seqs)
             self.olora_tokenizers = None
-        
+        else:
+            self.lora_tokenizers = None
+            self.olora_tokenizers = None        
 
 
     def encode(self,

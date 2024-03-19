@@ -385,6 +385,7 @@ class ColumnParallelLinearWithLoRA(BaseLayerWithLoRA):
             max_loras: int,
             lora_config: LoRAConfig,
             model_config: Optional[PretrainedConfig] = None) -> None:
+        self.lora_config = lora_config
         self.lora_a_stacked = torch.zeros(
             max_loras,
             1,
@@ -441,13 +442,22 @@ class ColumnParallelLinearWithLoRA(BaseLayerWithLoRA):
                       bias: Optional[torch.Tensor]) -> torch.Tensor:
         output = self.base_layer.linear_method.apply_weights(
             self.base_layer.linear_weights, x, bias)
-        _apply_olora(
-            x,
-            self.lora_a_stacked,
-            self.lora_b_stacked,
-            self.indices[:self.indices_len[0]],
-            output,
-        )
+        if self.lora_config.enable_olora:
+            _apply_olora(
+                x,
+                self.lora_a_stacked,
+                self.lora_b_stacked,
+                self.indices[:self.indices_len[0]],
+                output,
+            )
+        else:
+            _apply_lora(
+                x,
+                self.lora_a_stacked,
+                self.lora_b_stacked,
+                self.indices[:self.indices_len[0]],
+                output,
+            )
         return output
 
     def forward(self, input_):
@@ -497,6 +507,7 @@ class MergedColumnParallelLinearWithLoRA(ColumnParallelLinearWithLoRA):
             lora_config: LoRAConfig,
             model_config: Optional[PretrainedConfig] = None) -> None:
         n_slices = 2
+        self.lora_config = lora_config
         if not (len(self.base_layer.output_sizes) == n_slices
                 and self.base_layer.output_sizes[0]
                 == self.base_layer.output_sizes[1]):
@@ -570,14 +581,25 @@ class MergedColumnParallelLinearWithLoRA(ColumnParallelLinearWithLoRA):
                       bias: Optional[torch.Tensor]) -> torch.Tensor:
         output = self.base_layer.linear_method.apply_weights(
             self.base_layer.linear_weights, x, bias)
-        _apply_olora_packed_nslice(
-            x,
-            self.lora_a_stacked,
-            self.lora_b_stacked,
-            self.indices[:self.indices_len[0]],
-            output,
-            (self.output_dim, self.output_dim),
-        )
+        if self.lora_config.enable_olora:
+            _apply_olora_packed_nslice(
+                x,
+                self.lora_a_stacked,
+                self.lora_b_stacked,
+                self.indices[:self.indices_len[0]],
+                output,
+                (self.output_dim, self.output_dim),
+            )
+        else:
+            _apply_lora_packed_nslice(
+                x,
+                self.lora_a_stacked,
+                self.lora_b_stacked,
+                self.indices[:self.indices_len[0]],
+                output,
+                (self.output_dim, self.output_dim),
+            )
+            
         return output
 
 
@@ -601,6 +623,7 @@ class QKVParallelLinearWithLora(ColumnParallelLinearWithLoRA):
             lora_config: LoRAConfig,
             model_config: Optional[PretrainedConfig] = None) -> None:
         self.tp_size = get_tensor_model_parallel_world_size()
+        self.lora_config = lora_config
         tp_rank = get_tensor_model_parallel_rank()
         self.q_proj_shard_size = (self.base_layer.num_heads *
                                   self.base_layer.head_size)
@@ -739,14 +762,24 @@ class QKVParallelLinearWithLora(ColumnParallelLinearWithLoRA):
                       bias: Optional[torch.Tensor]) -> torch.Tensor:
         output = self.base_layer.linear_method.apply_weights(
             self.base_layer.linear_weights, x, bias)
-        _apply_olora_packed_nslice(
-            x,
-            self.lora_a_stacked,
-            self.lora_b_stacked,
-            self.indices[:self.indices_len[0]],
-            output,
-            self.output_slices,
-        )
+        if self.lora_config.enable_olora:
+            _apply_olora_packed_nslice(
+                x,
+                self.lora_a_stacked,
+                self.lora_b_stacked,
+                self.indices[:self.indices_len[0]],
+                output,
+                self.output_slices,
+            )
+        else:
+            _apply_lora_packed_nslice(
+                x,
+                self.lora_a_stacked,
+                self.lora_b_stacked,
+                self.indices[:self.indices_len[0]],
+                output,
+                self.output_slices,
+            )            
         return output
 
 
@@ -761,6 +794,7 @@ class RowParallelLinearWithLoRA(BaseLayerWithLoRA):
             max_loras: int,
             lora_config: LoRAConfig,
             model_config: Optional[PretrainedConfig] = None) -> None:
+        self.lora_config = lora_config
         self.lora_a_stacked = torch.zeros(
             (
                 max_loras,
@@ -824,13 +858,22 @@ class RowParallelLinearWithLoRA(BaseLayerWithLoRA):
     def apply_weights(self, x: torch.Tensor) -> torch.Tensor:
         output = self.base_layer.linear_method.apply_weights(
             self.base_layer.linear_weights, x)
-        _apply_olora(
-            x,
-            self.lora_a_stacked,
-            self.lora_b_stacked,
-            self.indices[:self.indices_len[0]],
-            output,
-        )
+        if self.lora_config.enable_olora:
+            _apply_olora(
+                x,
+                self.lora_a_stacked,
+                self.lora_b_stacked,
+                self.indices[:self.indices_len[0]],
+                output,
+            )
+        else:
+            _apply_lora(
+                x,
+                self.lora_a_stacked,
+                self.lora_b_stacked,
+                self.indices[:self.indices_len[0]],
+                output,
+            )  
         return output
 
     def forward(self, input_):

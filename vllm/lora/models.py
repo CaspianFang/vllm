@@ -360,19 +360,34 @@ class LoRAModelManager:
         self.max_num_batched_tokens = math.ceil(max_num_batched_tokens / 8) * 8
         self.lora_index_to_id: List[Optional[int]] = [None] * self.lora_slots
         self.vocab_size = vocab_size
-        self.base_indices = torch.empty((self.max_num_batched_tokens,self.max_olora),
+        if self.lora_config.enable_olora:
+            self.base_indices = torch.empty((self.max_num_batched_tokens,self.max_olora),
+                                            dtype=torch.long,
+                                            device="cuda")
+            self.sampler_indices = torch.empty((self.max_num_batched_tokens,self.max_olora),
+                                            dtype=torch.long,
+                                            device="cuda")
+            self.sampler_indices_padded = torch.empty((self.max_num_batched_tokens,self.max_olora),
+                                                    dtype=torch.long,
+                                                    device="cuda")
+            self.embeddings_indices = torch.empty((2,
+                                                self.max_num_batched_tokens,self.max_olora),
+                                                dtype=torch.long,
+                                                device="cuda")
+        else:
+            self.base_indices = torch.empty(self.max_num_batched_tokens,
                                         dtype=torch.long,
                                         device="cuda")
-        self.sampler_indices = torch.empty((self.max_num_batched_tokens,self.max_olora),
-                                           dtype=torch.long,
-                                           device="cuda")
-        self.sampler_indices_padded = torch.empty((self.max_num_batched_tokens,self.max_olora),
-                                                  dtype=torch.long,
-                                                  device="cuda")
-        self.embeddings_indices = torch.empty((2,
-                                              self.max_num_batched_tokens,self.max_olora),
-                                              dtype=torch.long,
-                                              device="cuda")
+            self.sampler_indices = torch.empty(self.max_num_batched_tokens,
+                                            dtype=torch.long,
+                                            device="cuda")
+            self.sampler_indices_padded = torch.empty(self.max_num_batched_tokens,
+                                                    dtype=torch.long,
+                                                    device="cuda")
+            self.embeddings_indices = torch.empty(2,
+                                                self.max_num_batched_tokens,
+                                                dtype=torch.long,
+                                                device="cuda")
         self.offsets = []
         # 4 is the number of indicies tensors defined above
         # base_indices, sampler_indices, sampler_indices_padded,

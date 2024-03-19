@@ -95,6 +95,7 @@ class Scheduler:
         # simple and NOT fair. It can lead to starvation of some
         # LoRAs. This should be improved in the future.
         self.lora_config = lora_config
+        self.enable_olora = self.lora_config.enable_olora
 
         self.prompt_limit = min(self.scheduler_config.max_model_len,
                                 self.scheduler_config.max_num_batched_tokens)
@@ -242,8 +243,13 @@ class Scheduler:
             # requests in the generation phase.
             num_curr_seqs = sum(seq_group.get_max_num_running_seqs()
                                 for seq_group in self.running)
-            curr_loras = set(
-                [ id  for seq_group in self.running for id  in seq_group.olora_int_ids ]
+            if self.enable_olora:
+                curr_loras = set(
+                    [ id  for seq_group in self.running for id  in seq_group.olora_int_ids ]
+                    ) if self.enable_olora else None
+            else:
+                curr_loras = set(
+                    [seq_group.lora_int_id for seq_group in self.running]
                 ) if self.lora_enabled else None
             seq_lens: List[int] = []
 
@@ -287,7 +293,7 @@ class Scheduler:
                 olora_int_ids = [] # caesar
 
                 if self.lora_enabled:
-                    lora_int_id = seq_group.lora_int_id
+                    
                     # caesar
                     if seq_group.olora_int_ids:
                         olora_int_ids = seq_group.olora_int_ids
@@ -372,7 +378,7 @@ class Scheduler:
                 lora_int_id = 0
                 olora_int_ids = [] # caesar
                 if self.lora_enabled:
-                    lora_int_id = seq_group.lora_int_id
+                    
                     # caesar
                     if seq_group.olora_int_ids:
                         olora_int_ids = seq_group.olora_int_ids
@@ -458,8 +464,13 @@ class Scheduler:
         if not preempted:
             num_curr_seqs = sum(seq_group.get_max_num_running_seqs()
                                 for seq_group in self.running)
-            curr_loras = set(
-                [ id  for seq_group in self.running for id  in seq_group.olora_int_ids ]
+            if self.enable_olora:
+                curr_loras = set(
+                    [ id  for seq_group in self.running for id  in seq_group.olora_int_ids ]
+                    ) if self.enable_olora else None
+            else:
+                curr_loras = set(
+                    [seq_group.lora_int_id for seq_group in self.running]
                 ) if self.lora_enabled else None
 
             leftover_swapped = deque()
@@ -469,7 +480,7 @@ class Scheduler:
                 lora_int_id = 0
                 olora_int_ids = [] # caesar
                 if self.lora_enabled:
-                    lora_int_id = seq_group.lora_int_id
+                    
                     # caesar
                     if seq_group.olora_int_ids:
                         olora_int_ids = seq_group.olora_int_ids
@@ -578,9 +589,14 @@ class Scheduler:
                              if not seq_group.is_finished())
 
     def get_stats(self) -> Dict[str, int]:
-        curr_loras = set(
-                seq_group.lora_int_id
-                for seq_group in self.running) if self.lora_enabled else None
+        if self.enable_olora:
+            curr_loras = set(
+                [ id  for seq_group in self.running for id  in seq_group.olora_int_ids ]
+                ) if self.enable_olora else None
+        else:
+            curr_loras = set(
+                [seq_group.lora_int_id for seq_group in self.running]
+            ) if self.lora_enabled else None
         
         return {
             "num_waiting": len(self.waiting),

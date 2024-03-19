@@ -12,7 +12,7 @@ from vllm import EngineArgs, LLMEngine, SamplingParams, RequestOutput
 from vllm.lora.request import LoRARequest
 
 
-def create_test_prompts(lora_path: str) -> List[Tuple[str, SamplingParams]]:
+def create_test_prompts(lora_path: List[str]) -> List[Tuple[str, SamplingParams]]:
     """Create a list of test prompts with their sampling parameters.
     
     2 requests for base model, 4 requests for the LoRA. We define 2
@@ -38,7 +38,7 @@ def create_test_prompts(lora_path: str) -> List[Tuple[str, SamplingParams]]:
                         prompt_logprobs=1,
                         max_tokens=128,
                         stop_token_ids=[32003]),
-         LoRARequest("sql-lora", 1, lora_path)),
+         LoRARequest("alpaca-lora-7b", 1, lora_path[0])),
         ("[user] Write a SQL query to answer the question based on the table schema.\n\n context: CREATE TABLE table_name_11 (nationality VARCHAR, elector VARCHAR)\n\n question: When Anchero Pantaleone was the elector what is under nationality? [/user] [assistant]",
          SamplingParams(n=3,
                         best_of=3,
@@ -46,14 +46,14 @@ def create_test_prompts(lora_path: str) -> List[Tuple[str, SamplingParams]]:
                         temperature=0,
                         max_tokens=128,
                         stop_token_ids=[32003]),
-         LoRARequest("sql-lora", 1, lora_path)),
+         LoRARequest("bactrian-x-llama-7b-lora", 2, lora_path[1])),
         ("[user] Write a SQL query to answer the question based on the table schema.\n\n context: CREATE TABLE table_name_74 (icao VARCHAR, airport VARCHAR)\n\n question: Name the ICAO for lilongwe international airport [/user] [assistant]",
          SamplingParams(temperature=0.0,
                         logprobs=1,
                         prompt_logprobs=1,
                         max_tokens=128,
                         stop_token_ids=[32003]),
-         LoRARequest("sql-lora2", 2, lora_path)),
+         LoRARequest("wizardLM-lora-7b", 3, lora_path[2])),
         ("[user] Write a SQL query to answer the question based on the table schema.\n\n context: CREATE TABLE table_name_11 (nationality VARCHAR, elector VARCHAR)\n\n question: When Anchero Pantaleone was the elector what is under nationality? [/user] [assistant]",
          SamplingParams(n=3,
                         best_of=3,
@@ -61,7 +61,7 @@ def create_test_prompts(lora_path: str) -> List[Tuple[str, SamplingParams]]:
                         temperature=0,
                         max_tokens=128,
                         stop_token_ids=[32003]),
-         LoRARequest("sql-lora", 1, lora_path)),
+         LoRARequest("wizardLM-lora-7b", 3, lora_path[2])),
     ]
 
 
@@ -96,8 +96,9 @@ def initialize_engine() -> LLMEngine:
     #   numbers will cause higher memory usage. If you know that all LoRAs will
     #   use the same rank, it is recommended to set this as low as possible.
     # max_cpu_loras: controls the size of the CPU LoRA cache.
-    engine_args = EngineArgs(model="meta-llama/Llama-2-7b-hf",
+    engine_args = EngineArgs(model="../../weights/backbone/llama_7b_hf",
                              enable_lora=True,
+                             enforce_eager=True,
                              max_loras=1,
                              max_lora_rank=8,
                              max_cpu_loras=2,
@@ -108,10 +109,12 @@ def initialize_engine() -> LLMEngine:
 def main():
     """Main function that sets up and runs the prompt processing."""
     engine = initialize_engine()
-    lora_path = snapshot_download(repo_id="yard1/llama-2-7b-sql-lora-test")
+    lora_path = ["../../weights/loras/loras/alpaca-lora-7b","../../weights/loras/loras/bactrian-x-llama-7b-lora","../../weights/loras/loras/wizardLM-lora-7b"]
     test_prompts = create_test_prompts(lora_path)
     process_requests(engine, test_prompts)
 
 
 if __name__ == '__main__':
+    import os 
+    os.environ['CUDA_VISIBLE_DEVICES'] = "1"
     main()
