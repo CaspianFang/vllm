@@ -95,7 +95,10 @@ class Scheduler:
         # simple and NOT fair. It can lead to starvation of some
         # LoRAs. This should be improved in the future.
         self.lora_config = lora_config
-        self.enable_olora = self.lora_config.enable_olora
+        if self.lora_config is not None:
+            self.enable_olora = self.lora_config.enable_olora
+        else:
+            self.enable_olora = False
 
         self.prompt_limit = min(self.scheduler_config.max_model_len,
                                 self.scheduler_config.max_num_batched_tokens)

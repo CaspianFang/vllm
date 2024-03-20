@@ -38,6 +38,7 @@ class EngineArgs:
     max_context_len_to_capture: int = 8192
     disable_custom_all_reduce: bool = False
     enable_lora: bool = False
+    enable_olora: bool = False
     max_loras: int = 1
     max_lora_rank: int = 16
     lora_extra_vocab_size: int = 256
@@ -294,7 +295,8 @@ class EngineArgs:
             max_loras=self.max_loras,
             lora_extra_vocab_size=self.lora_extra_vocab_size,
             lora_dtype=self.lora_dtype,
-            enable_olora=self.enable_lora,
+            enable_lora=self.enable_lora,
+            enable_olora=self.enable_olora,
             max_cpu_loras=self.max_cpu_loras if self.max_cpu_loras
             and self.max_cpu_loras > 0 else None) if self.enable_lora else None
         return model_config, cache_config, parallel_config, scheduler_config, lora_config

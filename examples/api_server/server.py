@@ -18,7 +18,7 @@ TIMEOUT_KEEP_ALIVE = 5  # seconds.
 app = FastAPI()
 engine = None
 
-lora_path = ["../../../weights/loras/loras/alpaca-lora-7b","../../../weights/loras/loras/bactrian-x-llama-7b-lora","../../../weights/loras/loras/wizardLM-lora-7b"]
+lora_path = ["../../../weights/loras/alpaca-lora-7b","../../../weights/loras/bactrian-x-llama-7b-lora","../../../weightsloras/wizardLM-lora-7b"]
 LoRA_id_list = [1,2,3]
 LoRA_Path_list = lora_path
 LoRA_name_list = ["alpaca-lora-7b","bactrian-x-llama-7b-lora","wizardLM-lora-7b"]
@@ -113,11 +113,12 @@ async def generate(request: Request) -> Response:
 if __name__ == '__main__':
     engine_args = AsyncEngineArgs(
         model="../../../weights/backbone/llama_7b_hf",
-        enable_lora=False,
+        enable_lora=True,
+        enable_olora=True,
         enforce_eager=True,
-        max_loras=1,
+        max_loras=5,
         max_lora_rank=16,
-        max_cpu_loras=2,
+        max_cpu_loras=12,
         max_num_seqs=64,
         gpu_memory_utilization=0.8,
         tensor_parallel_size=2,

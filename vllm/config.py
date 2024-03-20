@@ -451,6 +451,7 @@ class LoRAConfig:
     # This is a constant.
     lora_vocab_padding_size: ClassVar[int] = 256
     max_oloras : int = 10
+    enable_lora: bool = False
     enable_olora : bool = False
 
     def __post_init__(self):

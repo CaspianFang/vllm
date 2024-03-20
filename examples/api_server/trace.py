@@ -36,7 +36,8 @@ async def async_requests(avg_tokens: int, request_rate: int):
             data = {
                 "prompt": texts[i],
                 "max_tokens": avg_tokens + 10,
-                # "olora": True
+                "olora": True,
+                # "lora"  : True
             }
             tasks.append(async_request_task(session, URL, data))
         
