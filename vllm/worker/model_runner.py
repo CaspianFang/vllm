@@ -44,7 +44,8 @@ class ModelRunner:
         self.scheduler_config = scheduler_config
         self.lora_config = lora_config
         self.is_driver_worker = is_driver_worker
-        self.enable_olora = self.lora_config.enable_olora
+        if self.lora_config is not None:
+            self.enable_olora = self.lora_config.enable_olora
         # model_config can be None in tests/samplers/test_sampler.py.
         # FIXME(woosuk): This is a hack to make the tests work. Refactor this.
         self.sliding_window = (model_config.get_sliding_window()

@@ -27,6 +27,52 @@ def create_test_prompts(lora_path: List[str]) -> List[Tuple[str, SamplingParams]
     LoRA_name_list = ["alpaca-lora-7b","bactrian-x-llama-7b-lora","wizardLM-lora-7b"]
     all_lora_reqs = lora_reqs= [LoRARequest("alpaca-lora-7b", 1, lora_path[0]),LoRARequest("bactrian-x-llama-7b-lora",2,lora_path[1]), LoRARequest("wizardLM-lora-7b",3,lora_path[2])]
 
+    # return [
+    #     ("A robot may not injure a human being",
+    #      SamplingParams(temperature=0.0,
+    #                     logprobs=1,
+    #                     prompt_logprobs=1,
+    #                     max_tokens=128), None),
+    #     ("To be or not to be,",
+    #      SamplingParams(temperature=0.8,
+    #                     top_k=5,
+    #                     presence_penalty=0.2,
+    #                     max_tokens=128), None),
+    #     ("[user] Write a SQL query to answer the question based on the table schema.\n\n context: CREATE TABLE table_name_74 (icao VARCHAR, airport VARCHAR)\n\n question: Name the ICAO for lilongwe international airport [/user] [assistant]",
+    #      SamplingParams(temperature=0.0,
+    #                     logprobs=1,
+    #                     prompt_logprobs=1,
+    #                     max_tokens=128,
+    #                     stop_token_ids=[32003]),
+    #      OLoRARequest(LoRA_name_list,olora_int_ids=LoRA_id_list,lora_local_path=LoRA_Path_list,self_id = 1, lora_reqs= all_lora_reqs  )),
+    #     ("[user] Write a SQL query to answer the question based on the table schema.\n\n context: CREATE TABLE table_name_11 (nationality VARCHAR, elector VARCHAR)\n\n question: When Anchero Pantaleone was the elector what is under nationality? [/user] [assistant]",
+    #      SamplingParams(n=3,
+    #                     best_of=3,
+    #                     use_beam_search=True,
+    #                     temperature=0,
+    #                     max_tokens=128,
+    #                     stop_token_ids=[32003]),
+    #      OLoRARequest(LoRA_name_list[:-1],olora_int_ids=LoRA_id_list[:-1],lora_local_path=LoRA_Path_list[:-1],self_id = 2, lora_reqs= all_lora_reqs[:-1])),
+    #     ("[user] Write a SQL query to answer the question based on the table schema.\n\n context: CREATE TABLE table_name_74 (icao VARCHAR, airport VARCHAR)\n\n question: Name the ICAO for lilongwe international airport [/user] [assistant]",
+    #      SamplingParams(temperature=0.0,
+    #                     logprobs=1,
+    #                     prompt_logprobs=1,
+    #                     max_tokens=128,
+    #                     stop_token_ids=[32003]),
+    #      OLoRARequest(LoRA_name_list[:-1],olora_int_ids=LoRA_id_list[:-1],lora_local_path=LoRA_Path_list[:-1],self_id = 2, lora_reqs= all_lora_reqs[:-1])),
+    #     ("[user] Write a SQL query to answer the question based on the table schema.\n\n context: CREATE TABLE table_name_11 (nationality VARCHAR, elector VARCHAR)\n\n question: When Anchero Pantaleone was the elector what is under nationality? [/user] [assistant]",
+    #      SamplingParams(n=3,
+    #                     best_of=3,
+    #                     use_beam_search=True,
+    #                     temperature=0,
+    #                     max_tokens=128,
+    #                     stop_token_ids=[32003]),
+    #      OLoRARequest(LoRA_name_list[0:1],olora_int_ids=LoRA_id_list[0:1],lora_local_path=LoRA_Path_list[0:1],self_id = 3, lora_reqs= all_lora_reqs[0:1])),
+    # ]
+
+
+
+
     return [
         ("A robot may not injure a human being",
          SamplingParams(temperature=0.0,
@@ -44,7 +90,7 @@ def create_test_prompts(lora_path: List[str]) -> List[Tuple[str, SamplingParams]
                         prompt_logprobs=1,
                         max_tokens=128,
                         stop_token_ids=[32003]),
-         OLoRARequest(LoRA_name_list,olora_int_ids=LoRA_id_list,lora_local_path=LoRA_Path_list,self_id = 1, lora_reqs= all_lora_reqs  )),
+                        None),
         ("[user] Write a SQL query to answer the question based on the table schema.\n\n context: CREATE TABLE table_name_11 (nationality VARCHAR, elector VARCHAR)\n\n question: When Anchero Pantaleone was the elector what is under nationality? [/user] [assistant]",
          SamplingParams(n=3,
                         best_of=3,
@@ -52,14 +98,14 @@ def create_test_prompts(lora_path: List[str]) -> List[Tuple[str, SamplingParams]
                         temperature=0,
                         max_tokens=128,
                         stop_token_ids=[32003]),
-         OLoRARequest(LoRA_name_list[:-1],olora_int_ids=LoRA_id_list[:-1],lora_local_path=LoRA_Path_list[:-1],self_id = 2, lora_reqs= all_lora_reqs[:-1])),
+                        None),
         ("[user] Write a SQL query to answer the question based on the table schema.\n\n context: CREATE TABLE table_name_74 (icao VARCHAR, airport VARCHAR)\n\n question: Name the ICAO for lilongwe international airport [/user] [assistant]",
          SamplingParams(temperature=0.0,
                         logprobs=1,
                         prompt_logprobs=1,
                         max_tokens=128,
                         stop_token_ids=[32003]),
-         OLoRARequest(LoRA_name_list[:-1],olora_int_ids=LoRA_id_list[:-1],lora_local_path=LoRA_Path_list[:-1],self_id = 2, lora_reqs= all_lora_reqs[:-1])),
+                        None),
         ("[user] Write a SQL query to answer the question based on the table schema.\n\n context: CREATE TABLE table_name_11 (nationality VARCHAR, elector VARCHAR)\n\n question: When Anchero Pantaleone was the elector what is under nationality? [/user] [assistant]",
          SamplingParams(n=3,
                         best_of=3,
@@ -67,7 +113,7 @@ def create_test_prompts(lora_path: List[str]) -> List[Tuple[str, SamplingParams]
                         temperature=0,
                         max_tokens=128,
                         stop_token_ids=[32003]),
-         OLoRARequest(LoRA_name_list[0:1],olora_int_ids=LoRA_id_list[0:1],lora_local_path=LoRA_Path_list[0:1],self_id = 3, lora_reqs= all_lora_reqs[0:1])),
+                        None),
     ]
 
 
@@ -103,7 +149,8 @@ def initialize_engine() -> LLMEngine:
     #   use the same rank, it is recommended to set this as low as possible.
     # max_cpu_loras: controls the size of the CPU LoRA cache.
     engine_args = EngineArgs(model="../../weights/backbone/llama_7b_hf",
-                             enable_lora=True,
+                             enable_lora=False,
+                             enable_olora=False,
                              enforce_eager=True,
                              max_loras=1,
                              max_lora_rank=8,
@@ -115,7 +162,7 @@ def initialize_engine() -> LLMEngine:
 def main():
     """Main function that sets up and runs the prompt processing."""
     engine = initialize_engine()
-    lora_path = ["../../weights/loras/loras/alpaca-lora-7b","../../weights/loras/loras/bactrian-x-llama-7b-lora","../../weights/loras/loras/wizardLM-lora-7b"]
+    lora_path = ["../../weights/loras/alpaca-lora-7b","../../weights/loras/bactrian-x-llama-7b-lora","../../weights/loras/wizardLM-lora-7b"]
     test_prompts = create_test_prompts(lora_path)
     process_requests(engine, test_prompts)
 

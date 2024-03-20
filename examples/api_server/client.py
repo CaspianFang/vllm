@@ -2,7 +2,6 @@ import requests
 
 data = {
     "prompt": "To be or not to be, ",
-    "olora": "True",
 }
 
 # 向127.0.0.1/generate发送post请求

@@ -384,6 +384,7 @@ class SequenceGroupMetadata:
         lora_request: Optional[LoRARequest] = None,
         olora_request: Optional[OLoRARequest] = None,
         prefix: Optional[Prefix] = None,
+        computed_block_nums: Optional[List[int]] = None,
     ) -> None:
         self.request_id = request_id
         self.is_prompt = is_prompt
@@ -392,6 +393,7 @@ class SequenceGroupMetadata:
         self.block_tables = block_tables
         self.lora_request = lora_request
         self.olora_request = olora_request
+        self.computed_block_nums = computed_block_nums
         self.prefix = prefix
 
         assert lora_request is None or olora_request is None

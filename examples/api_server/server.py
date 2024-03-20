@@ -16,7 +16,7 @@ TIMEOUT_KEEP_ALIVE = 5  # seconds.
 app = FastAPI()
 engine = None
 
-lora_path = ["../../../weights/loras/loras/alpaca-lora-7b","../../../weights/loras/loras/bactrian-x-llama-7b-lora","../../../weights/loras/loras/wizardLM-lora-7b"]
+lora_path = ["../../../weights/loras/alpaca-lora-7b","../../../weights/loras/bactrian-x-llama-7b-lora","../../../weightsloras/wizardLM-lora-7b"]
 LoRA_id_list = [1,2,3]
 LoRA_Path_list = lora_path
 LoRA_name_list = ["alpaca-lora-7b","bactrian-x-llama-7b-lora","wizardLM-lora-7b"]
@@ -43,6 +43,7 @@ async def generate(request: Request) -> Response:
     prefix_pos = request_dict.pop("prefix_pos", None)
     stream = request_dict.pop("stream", False)
     olora = request_dict.pop("olora", None)
+    olora_request = None
     if olora is not None:
         olora_request = OLoRARequest(LoRA_name_list[:-1],
                                     olora_int_ids=LoRA_id_list[:-1],
@@ -90,9 +91,10 @@ async def generate(request: Request) -> Response:
 if __name__ == '__main__':
     engine_args = AsyncEngineArgs(
         model="../../../weights/backbone/llama_7b_hf",
-        enable_lora=True,
+        enable_lora=False,
+        enable_olora=False,
         enforce_eager=True,
-        max_loras=1,
+        max_loras=3,
         max_lora_rank=8,
         max_cpu_loras=2,
         max_num_seqs=256
