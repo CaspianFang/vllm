@@ -621,7 +621,7 @@ class AsyncLLMEngine:
             if not has_requests_in_progress:
                 await self._request_tracker.wait_for_new_requests()
 
-            has_requests_migrate_out = await self.before_engine_step()
+            # has_requests_migrate_out = await self.before_engine_step()
             has_requests_in_progress = await self.engine_step()
             await asyncio.sleep(0)
 
@@ -866,7 +866,7 @@ class AsyncLLMEngine:
                     olora_request=olora_request,
                     prefix_pos=prefix_pos,
                 )
-            else:
+            elif lora_request is not None:
                 stream = await self.add_request(
                     request_id,
                     prompt,
@@ -874,6 +874,15 @@ class AsyncLLMEngine:
                     prompt_token_ids=prompt_token_ids,
                     arrival_time=arrival_time,
                     lora_request=lora_request,
+                    prefix_pos=prefix_pos,
+                )
+            else:
+                stream = await self.add_request(
+                    request_id,
+                    prompt,
+                    sampling_params,
+                    prompt_token_ids=prompt_token_ids,
+                    arrival_time=arrival_time,
                     prefix_pos=prefix_pos,
                 )
 

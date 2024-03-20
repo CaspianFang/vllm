@@ -12,6 +12,8 @@ from vllm.sampling_params import SamplingParams
 from vllm.utils import random_uuid
 from vllm.lora.request import LoRARequest,OLoRARequest
 
+import random
+
 TIMEOUT_KEEP_ALIVE = 5  # seconds.
 app = FastAPI()
 engine = None
@@ -42,7 +44,13 @@ async def generate(request: Request) -> Response:
     prompt = request_dict.pop("prompt")
     prefix_pos = request_dict.pop("prefix_pos", None)
     stream = request_dict.pop("stream", False)
+    
     olora = request_dict.pop("olora", None)
+    olora_request = None
+    
+    lora = request_dict.pop("lora", None)
+    lora_request = None
+    
     if olora is not None:
         olora_request = OLoRARequest(LoRA_name_list[:-1],
                                     olora_int_ids=LoRA_id_list[:-1],
@@ -51,12 +59,27 @@ async def generate(request: Request) -> Response:
                                     lora_reqs= all_lora_reqs[:-1])
     sampling_params = SamplingParams(**request_dict)
     request_id = random_uuid()
-
-    results_generator = engine.generate(prompt,
-                                        sampling_params,
-                                        request_id,
-                                        olora_request=olora_request,
-                                        prefix_pos=prefix_pos)
+    
+    if lora is not None:
+        lora_request = all_lora_reqs[random.randint(0,2)]
+        
+    if olora_request is not None:
+        results_generator = engine.generate(prompt,
+                                            sampling_params,
+                                            request_id,
+                                            olora_request=olora_request,
+                                            prefix_pos=prefix_pos)
+    elif lora_request is not None:
+        results_generator = engine.generate(prompt,
+                                            sampling_params,
+                                            request_id,
+                                            lora_request=lora_request,
+                                            prefix_pos=prefix_pos)
+    else:
+        results_generator = engine.generate(prompt,
+                                            sampling_params,
+                                            request_id,
+                                            prefix_pos=prefix_pos)
 
     # Streaming case
     async def stream_results() -> AsyncGenerator[bytes, None]:
@@ -90,12 +113,15 @@ async def generate(request: Request) -> Response:
 if __name__ == '__main__':
     engine_args = AsyncEngineArgs(
         model="../../../weights/backbone/llama_7b_hf",
-        enable_lora=True,
+        enable_lora=False,
         enforce_eager=True,
         max_loras=1,
-        max_lora_rank=8,
+        max_lora_rank=16,
         max_cpu_loras=2,
-        max_num_seqs=256
+        max_num_seqs=64,
+        gpu_memory_utilization=0.8,
+        tensor_parallel_size=2,
+        disable_log_requests=True
     )
     engine = AsyncLLMEngine.from_engine_args(engine_args)
     
