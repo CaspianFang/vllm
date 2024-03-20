@@ -51,9 +51,9 @@ class OLoRARequest:
     def __eq__(self, value: object) -> bool:
         status = True
         if isinstance(value, OLoRARequest):
+            self.olora_int_ids.sort()
+            value.olora_int_ids.sort()
             for k, v in zip(self.olora_int_ids, value.olora_int_ids):
-                k.sort()
-                v.sort()
                 if k != v:
                     status = False
         return isinstance(

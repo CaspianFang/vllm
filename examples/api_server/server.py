@@ -18,11 +18,11 @@ TIMEOUT_KEEP_ALIVE = 5  # seconds.
 app = FastAPI()
 engine = None
 
-lora_path = ["../../../weights/loras/alpaca-lora-7b","../../../weights/loras/bactrian-x-llama-7b-lora","../../../weightsloras/wizardLM-lora-7b"]
-LoRA_id_list = [1,2,3]
+lora_path = ["../../../weights/loras/loras/alpaca-lora-7b","../../../weights/loras/loras/wizardLM-lora-7b"]
+LoRA_id_list = [1,2]
 LoRA_Path_list = lora_path
-LoRA_name_list = ["alpaca-lora-7b","bactrian-x-llama-7b-lora","wizardLM-lora-7b"]
-all_lora_reqs = lora_reqs= [LoRARequest("alpaca-lora-7b", 1, lora_path[0]),LoRARequest("bactrian-x-llama-7b-lora",2,lora_path[1]), LoRARequest("wizardLM-lora-7b",3,lora_path[2])]
+LoRA_name_list = ["alpaca-lora-7b","wizardLM-lora-7b"]
+all_lora_reqs = lora_reqs= [LoRARequest("alpaca-lora-7b", 1, lora_path[0]), LoRARequest("wizardLM-lora-7b",2,lora_path[1])]
 
 
 @app.get("/health")
@@ -61,7 +61,7 @@ async def generate(request: Request) -> Response:
     request_id = random_uuid()
     
     if lora is not None:
-        lora_request = all_lora_reqs[random.randint(0,2)]
+        lora_request = all_lora_reqs[random.randint(0,1)]
         
     if olora_request is not None:
         results_generator = engine.generate(prompt,
@@ -114,7 +114,7 @@ if __name__ == '__main__':
     engine_args = AsyncEngineArgs(
         model="../../../weights/backbone/llama_7b_hf",
         enable_lora=True,
-        enable_olora=True,
+        enable_olora=False,
         enforce_eager=True,
         max_loras=5,
         max_lora_rank=16,
