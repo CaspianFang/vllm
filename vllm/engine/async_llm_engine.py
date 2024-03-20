@@ -5,7 +5,7 @@ from functools import partial
 from typing import (Any, Dict, Iterable, List, Optional, Set, Tuple, Type,
                     Union, AsyncIterator)
 
-from vllm.lora.request import LoRARequest
+from vllm.lora.request import LoRARequest, OLoRARequest
 from vllm.config import ModelConfig
 from vllm.engine.arg_utils import AsyncEngineArgs
 from vllm.engine.llm_engine import LLMEngine
@@ -134,6 +134,23 @@ class RequestTracker:
 
     def add_request(self, request_id: str,
                     **engine_add_request_kwargs) -> AsyncStream:
+        """Add a request to be sent to the engine on the next background
+        loop iteration."""
+        if request_id in self._request_streams:
+            raise KeyError(f"Request {request_id} already exists.")
+
+        stream = AsyncStream(request_id)
+        self._new_requests.put_nowait((stream, {
+            "request_id": request_id,
+            **engine_add_request_kwargs
+        }))
+
+        self.new_requests_event.set()
+
+        return stream
+    
+    def add_olora_request(self, request_id: str,
+                      **engine_add_request_kwargs) -> AsyncStream:
         """Add a request to be sent to the engine on the next background
         loop iteration."""
         if request_id in self._request_streams:
@@ -321,6 +338,7 @@ class _AsyncLLMEngine(LLMEngine):
         prompt_token_ids: Optional[List[int]] = None,
         arrival_time: Optional[float] = None,
         lora_request: Optional[LoRARequest] = None,
+        olora_request: Optional[OLoRARequest] = None,
         prefix_pos: Optional[int] = None,
     ) -> None:
         if lora_request is not None and not self.lora_config:
@@ -328,21 +346,33 @@ class _AsyncLLMEngine(LLMEngine):
                              "not enabled!")
         if arrival_time is None:
             arrival_time = time.time()
+        
         prompt_token_ids = await self.encode_request_async(
             request_id=request_id,
             prompt=prompt,
             prompt_token_ids=prompt_token_ids,
             lora_request=lora_request)
-
-        return self.add_request(
-            request_id,
-            prompt=prompt,
-            prompt_token_ids=prompt_token_ids,
-            sampling_params=sampling_params,
-            arrival_time=arrival_time,
-            lora_request=lora_request,
-            prefix_pos=prefix_pos,
-        )
+        
+        if olora_request is not None:
+            return self.add_olora_request(
+                request_id,
+                prompt=prompt,
+                prompt_token_ids=prompt_token_ids,
+                sampling_params=sampling_params,
+                arrival_time=arrival_time,
+                olora_request=olora_request,
+                prefix_pos=prefix_pos,
+            )
+        else:
+            return self.add_request(
+                request_id,
+                prompt=prompt,
+                prompt_token_ids=prompt_token_ids,
+                sampling_params=sampling_params,
+                arrival_time=arrival_time,
+                lora_request=lora_request,
+                prefix_pos=prefix_pos,
+            )
         
     async def recover_request_async(self, resource: dict) -> None:
         return self.recover_request(
@@ -650,6 +680,61 @@ class AsyncLLMEngine:
 
         return stream
     
+    async def add_olora_request(
+        self,
+        request_id: str,
+        prompt: Optional[str],
+        sampling_params: SamplingParams,
+        prompt_token_ids: Optional[List[int]] = None,
+        arrival_time: Optional[float] = None,
+        olora_request: Optional[OLoRARequest] = None,
+        prefix_pos: Optional[int] = None,
+    ) -> AsyncStream:
+        if self.log_requests:
+            shortened_prompt = prompt
+            shortened_token_ids = prompt_token_ids
+            if self.max_log_len is not None:
+                if shortened_prompt is not None:
+                    shortened_prompt = shortened_prompt[:self.max_log_len]
+                if shortened_token_ids is not None:
+                    shortened_token_ids = shortened_token_ids[:self.
+                                                              max_log_len]
+            logger.info(f"Received request {request_id}: "
+                        f"prompt: {shortened_prompt!r}, "
+                        f"prefix_pos: {prefix_pos},"
+                        f"sampling params: {sampling_params}, "
+                        f"prompt token ids: {shortened_token_ids}, "
+                        f"olora_request: {olora_request}.")
+        
+        if not self.is_running:
+            if self.start_engine_loop:
+                self.start_background_loop()
+            else:
+                raise AsyncEngineDeadError(
+                    "Background loop is not running. If it was running, "
+                    "inspect the output to find the stacktrace of the "
+                    "error that caused the background loop to stop "
+                    "(AsyncEngineDeadError).")
+                
+        if arrival_time is None:
+            arrival_time = time.time()
+        prompt_token_ids = await self.engine.encode_request_async(
+            request_id=request_id,
+            prompt=prompt,
+            prompt_token_ids=prompt_token_ids,
+            lora_request=olora_request)
+        
+        stream = self._request_tracker.add_olora_request(
+            request_id,
+            prompt=prompt,
+            sampling_params=sampling_params,
+            prompt_token_ids=prompt_token_ids,
+            arrival_time=arrival_time,
+            olora_request=olora_request,
+            prefix_pos=prefix_pos)
+        
+        return stream
+    
     async def recover_request(
         self, 
         request_id: str,
@@ -696,6 +781,7 @@ class AsyncLLMEngine:
         request_id: str,
         prompt_token_ids: Optional[List[int]] = None,
         lora_request: Optional[LoRARequest] = None,
+        olora_request: Optional[OLoRARequest] = None,
         prefix_pos: Optional[int] = None,
     ) -> AsyncIterator[RequestOutput]:
         """Generate outputs for a request.
@@ -770,15 +856,26 @@ class AsyncLLMEngine:
         arrival_time = time.monotonic()
 
         try:
-            stream = await self.add_request(
-                request_id,
-                prompt,
-                sampling_params,
-                prompt_token_ids=prompt_token_ids,
-                arrival_time=arrival_time,
-                lora_request=lora_request,
-                prefix_pos=prefix_pos,
-            )
+            if olora_request is not None:
+                stream = await self.add_olora_request(
+                    request_id,
+                    prompt,
+                    sampling_params,
+                    prompt_token_ids=prompt_token_ids,
+                    arrival_time=arrival_time,
+                    olora_request=olora_request,
+                    prefix_pos=prefix_pos,
+                )
+            else:
+                stream = await self.add_request(
+                    request_id,
+                    prompt,
+                    sampling_params,
+                    prompt_token_ids=prompt_token_ids,
+                    arrival_time=arrival_time,
+                    lora_request=lora_request,
+                    prefix_pos=prefix_pos,
+                )
 
             async for request_output in stream:
                 yield request_output
