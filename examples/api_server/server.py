@@ -13,17 +13,20 @@ from vllm.utils import random_uuid
 from vllm.lora.request import LoRARequest,OLoRARequest
 
 import random
+import time
 
 TIMEOUT_KEEP_ALIVE = 5  # seconds.
 app = FastAPI()
 engine = None
 
-lora_path = ["../../../weights/loras/loras/alpaca-lora-7b","../../../weights/loras/loras/wizardLM-lora-7b"]
+lora_path = ["../../../weights/loras/alpaca-lora-7b","../../../weights/loras/wizardLM-lora-7b"]
 LoRA_id_list = [1,2]
 LoRA_Path_list = lora_path
 LoRA_name_list = ["alpaca-lora-7b","wizardLM-lora-7b"]
 all_lora_reqs = lora_reqs= [LoRARequest("alpaca-lora-7b", 1, lora_path[0]), LoRARequest("wizardLM-lora-7b",2,lora_path[1])]
 
+now = time.monotonic()
+LOG_INTERVAL_SEC = 5
 
 @app.get("/health")
 async def health() -> Response:
@@ -51,6 +54,8 @@ async def generate(request: Request) -> Response:
     lora = request_dict.pop("lora", None)
     lora_request = None
     
+    estimated_tokens = request_dict['max_tokens']
+    
     if olora is not None:
         olora_request = OLoRARequest(LoRA_name_list[:-1],
                                     olora_int_ids=LoRA_id_list[:-1],
@@ -63,6 +68,7 @@ async def generate(request: Request) -> Response:
     if lora is not None:
         lora_request = all_lora_reqs[random.randint(0,1)]
         
+    start = time.monotonic()
     if olora_request is not None:
         results_generator = engine.generate(prompt,
                                             sampling_params,
@@ -107,10 +113,20 @@ async def generate(request: Request) -> Response:
     prompt = final_output.prompt
     text_outputs = [prompt + output.text for output in final_output.outputs]
     ret = {"text": text_outputs}
+    
+    end = time.monotonic()
+    global now
+    duration = time.monotonic() - now
+    if duration > LOG_INTERVAL_SEC:
+        print(f"Normalized Latency: {(end - start) / estimated_tokens} s/token")
+        now = time.monotonic()
     return JSONResponse(ret)
 
 
 if __name__ == '__main__':
+    import os
+    os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+    
     engine_args = AsyncEngineArgs(
         model="../../../weights/backbone/llama_7b_hf",
         enable_lora=True,
@@ -121,9 +137,10 @@ if __name__ == '__main__':
         max_cpu_loras=12,
         max_num_seqs=64,
         gpu_memory_utilization=0.8,
-        tensor_parallel_size=2,
-        disable_log_requests=True
+        tensor_parallel_size=1,
+        disable_log_requests=True,
+        swap_space=16
     )
     engine = AsyncLLMEngine.from_engine_args(engine_args)
     
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    uvicorn.run(app, host="127.0.0.1", port=8001, access_log=False)

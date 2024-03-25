@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 
 logger = init_logger(__name__)
 
-_LOGGING_INTERVAL_SEC = 5
+_LOGGING_INTERVAL_SEC = 1
 
 
 class LLMEngine:
