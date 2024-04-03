@@ -197,6 +197,10 @@ class OLoRAMapping:
     index_mapping: Tuple[List[int],...]
     # Per sampled token:
     prompt_mapping: Tuple[List[int],...]
+
+    def __post_init__(self):
+        self.index_mapping = tuple(self.index_mapping)
+        self.prompt_mapping = tuple(self.prompt_mapping)
     
 
 

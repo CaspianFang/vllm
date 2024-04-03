@@ -40,6 +40,7 @@ class EngineArgs:
     enable_lora: bool = False
     enable_olora: bool = False
     max_loras: int = 1
+    max_oloras: int = 10
     max_lora_rank: int = 16
     lora_extra_vocab_size: int = 256
     lora_dtype = 'auto'
@@ -227,10 +228,17 @@ class EngineArgs:
         parser.add_argument('--enable-lora',
                             action='store_true',
                             help='If True, enable handling of LoRA adapters.')
+        parser.add_argument('--enable-olora',
+                            action='store_true',
+                            help='If True, enable handling of OLoRA adapters.')
         parser.add_argument('--max-loras',
                             type=int,
                             default=EngineArgs.max_loras,
                             help='Max number of LoRAs in a single batch.')
+        parser.add_argument('--max-oloras',
+                            type=int,
+                            default=EngineArgs.max_oloras,
+                            help='Max number of LoRAs in a single OLoRA groups.')
         parser.add_argument('--max-lora-rank',
                             type=int,
                             default=EngineArgs.max_lora_rank,
@@ -293,6 +301,7 @@ class EngineArgs:
         lora_config = LoRAConfig(
             max_lora_rank=self.max_lora_rank,
             max_loras=self.max_loras,
+            max_oloras=self.max_oloras,
             lora_extra_vocab_size=self.lora_extra_vocab_size,
             lora_dtype=self.lora_dtype,
             enable_lora=self.enable_lora,

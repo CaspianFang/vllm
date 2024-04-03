@@ -445,12 +445,12 @@ class SchedulerConfig:
 class LoRAConfig:
     max_lora_rank: int
     max_loras: int
+    max_oloras : int
     max_cpu_loras: Optional[int] = None
     lora_dtype: Optional[torch.dtype] = None
     lora_extra_vocab_size: int = 256
     # This is a constant.
     lora_vocab_padding_size: ClassVar[int] = 256
-    max_oloras : int = 10
     enable_lora: bool = False
     enable_olora : bool = False
 
