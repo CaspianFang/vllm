@@ -173,6 +173,8 @@ def add_olora_slice(
 ):
     for batch_index in range(x.shape[0]):
         for indicies_index in range(indicies.shape[-1]):
+            print(f"x.shape: {x.shape}")
+            print(f"indicies.shape: {indicies.shape}")
             if indicies[batch_index][indicies_index] > -1:
                 y[batch_index,y_offset:y_offset+y_slice_size] += x[batch_index] @ wa_t_all[indicies[batch_index][indicies_index]].squeeze(0).transpose(-1, -2) @ wb_t_all[indicies[batch_index][indicies_index]].squeeze(0).transpose(-1, -2) 
     return y
@@ -194,9 +196,12 @@ class LoRAMapping:
 @dataclass
 class OLoRAMapping:
     # Per every token in input_ids:
-    index_mapping: Tuple[List[int],...]
+    index_mapping: Tuple[int, ...] # each int represents the index of the olora group
     # Per sampled token:
-    prompt_mapping: Tuple[List[int],...]
+    prompt_mapping: Tuple[int, ...]
+    # depiciting the olora group contains which loras
+    olora_list: List[Tuple[int, ...]] = None
+
 
     def __post_init__(self):
         self.index_mapping = tuple(self.index_mapping)

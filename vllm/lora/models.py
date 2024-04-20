@@ -128,34 +128,110 @@ def convert_mapping(
     return (base_indices, sampler_indices, sampler_indices_padded,
             embeddings_indices, indices_len)
 
-# not done yet , sampler is wrong in this case
+# # not done yet , sampler is wrong in this case
+# def convert_olora_mapping(
+#     mapping: OLoRAMapping, lora_index_to_id: List[Optional[int]],
+#     max_loras: int, vocab_size: int, extra_vocab_size: int,max_olora:int
+# )->Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, List[int]]:
+#     pad_ids = [
+#         _pad_to_max( [y for y in x ], max_olora,0) if len(x) > 0 else _pad_to_max([],max_olora,0) for x in mapping.index_mapping 
+#     ]
+#     indices = pad_ids.copy()
+#     embedding_indices = indices.copy()
+#     lora_indices = indices.copy()
+#     prompt_mapping = [
+#         _pad_to_max( [lora_index_to_id.index(y) for y in x ], max_olora,-1) if len(x) > 0 else _pad_to_max([],max_olora,-1) for x in mapping.prompt_mapping 
+#     ]
+#     lora_idx = None
+#     for i in range(len(indices)):
+#         for j in range(len(indices[i])):
+#         # TODO index can be slow. optimize
+#             lora_idx = (lora_index_to_id.index(indices[i][j])
+#                         if indices[i][j] > 0 else -1)
+#             embedding_indices[i][j] = lora_idx if indices[i][j] > 0 else 0
+#             indices[i][j] = i
+#             lora_indices[i][j] = lora_idx
+    
+#     indices = torch.tensor([indices, lora_indices, embedding_indices],
+#                            dtype=torch.long,
+#                            device="cuda")
+
+#     prompt_mapping = torch.tensor(prompt_mapping,
+#                                   device="cuda",
+#                                   dtype=torch.long)
+#     embeddings_indices = torch.stack([
+#         indices[2] * extra_vocab_size,
+#         indices[2] * (vocab_size + extra_vocab_size)
+#     ])
+
+#     embeddings_indices[embeddings_indices == -1] = max_loras - 1
+#     base_indices = indices[1]
+#     sampler_indices = prompt_mapping
+#     sampler_indices_padded = sampler_indices.clone()
+#     sampler_indices_padded[sampler_indices_padded == -1] = max_loras - 1
+#     sampler_indices_padded = (
+#         torch.arange(
+#             0, sampler_indices_padded.shape[0], device="cuda", dtype=torch.long).repeat(max_olora,1).T +
+#         (sampler_indices_padded * (sampler_indices_padded).shape[0]))
+#     indices_len = (base_indices.shape[-2], sampler_indices.shape[-2],
+#                    sampler_indices_padded.shape[-2],
+#                    embeddings_indices.shape[-2])
+#     # here may cause some bug
+#     return (base_indices, sampler_indices, sampler_indices_padded,
+#             embeddings_indices, indices_len)
+
 def convert_olora_mapping(
     mapping: OLoRAMapping, lora_index_to_id: List[Optional[int]],
-    max_loras: int, vocab_size: int, extra_vocab_size: int,max_olora:int
-)->Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, List[int]]:
-    pad_ids = [
-        _pad_to_max( [y for y in x ], max_olora,0) if len(x) > 0 else _pad_to_max([],max_olora,0) for x in mapping.index_mapping 
-    ]
-    indices = pad_ids.copy()
+    max_loras: int, vocab_size: int, extra_vocab_size: int
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, List[int]]:
+    """Converts LoRAMapping to index tensors.
+
+    Args:
+        mapping: LoRAMapping mapping rows in a batch to LoRA ids.
+        lora_index_to_id: List mapping LoRA ids to LoRA indices.
+        max_loras: Maximum number of LoRAs.
+        vocab_size: Model vocab size.
+        extra_vocab_size: Extra vocab size each LoRA can have.
+
+    Returns:
+        A tuple of tensors:
+            base_indices: Tensor of shape [batch_size] mapping batch rows to
+                LoRA indices.
+            sampler_indices: Tensor of shape [batch_size] mapping requests to
+                LoRA indices for sampler. For generation, this will be the
+                same as base_indicies. For prefill, this will map requests
+                to LoRA indices.
+            sampler_indices_padded: Tensor of shape [batch_size] mapping
+                requests to LoRA indices for sampler with padding.
+                Same as sampler_indicies, but -1 is replaced with
+                max_loras.
+            embeddings_indices: Tensor of shape [2, batch_size] mapping
+                requests to embedding indices. First row is for embeddings
+                added by the LoRAs, second row is for the LoRA.lora_a
+                embeddings.
+            indices_len: List of lengths of the above tensors.
+    """
+    indices = list(mapping.index_mapping).copy()
     embedding_indices = indices.copy()
     lora_indices = indices.copy()
+    # print("mapping.prompt_mapping")
+    # print(mapping.prompt_mapping)
     prompt_mapping = [
-        _pad_to_max( [lora_index_to_id.index(y) for y in x ], max_olora,-1) if len(x) > 0 else _pad_to_max([],max_olora,-1) for x in mapping.prompt_mapping 
+        lora_index_to_id.index(x[0]) if x[0] > 0 else -1 # TODO: this line need to be modifed as it's not so robust
+        for x in mapping.prompt_mapping
     ]
     lora_idx = None
     for i in range(len(indices)):
-        for j in range(len(indices[i])):
         # TODO index can be slow. optimize
-            lora_idx = (lora_index_to_id.index(indices[i][j])
-                        if indices[i][j] > 0 else -1)
-            embedding_indices[i][j] = lora_idx if indices[i][j] > 0 else 0
-            indices[i][j] = i
-            lora_indices[i][j] = lora_idx
-    
+        lora_idx = (lora_index_to_id.index(indices[i][0]) # TODO: this line need to be modifed as it's not so robust
+                    if indices[i][0] > 0 else -1)
+        embedding_indices[i] = lora_idx if indices[i][0] > 0 else 0
+        indices[i] = i
+        lora_indices[i] = lora_idx
+
     indices = torch.tensor([indices, lora_indices, embedding_indices],
                            dtype=torch.long,
                            device="cuda")
-
     prompt_mapping = torch.tensor(prompt_mapping,
                                   device="cuda",
                                   dtype=torch.long)
@@ -163,7 +239,6 @@ def convert_olora_mapping(
         indices[2] * extra_vocab_size,
         indices[2] * (vocab_size + extra_vocab_size)
     ])
-
     embeddings_indices[embeddings_indices == -1] = max_loras - 1
     base_indices = indices[1]
     sampler_indices = prompt_mapping
@@ -171,14 +246,15 @@ def convert_olora_mapping(
     sampler_indices_padded[sampler_indices_padded == -1] = max_loras - 1
     sampler_indices_padded = (
         torch.arange(
-            0, sampler_indices_padded.shape[0], device="cuda", dtype=torch.long).repeat(max_olora,1).T +
-        (sampler_indices_padded * (sampler_indices_padded).shape[0]))
-    indices_len = (base_indices.shape[-2], sampler_indices.shape[-2],
-                   sampler_indices_padded.shape[-2],
-                   embeddings_indices.shape[-2])
-    # here may cause some bug
+            0, len(sampler_indices_padded), device="cuda", dtype=torch.long) +
+        (sampler_indices_padded * len(sampler_indices_padded)))
+    indices_len = (base_indices.shape[-1], sampler_indices.shape[-1],
+                   sampler_indices_padded.shape[-1],
+                   embeddings_indices.shape[-1])    # TODO: This is th line that causes errors
+
     return (base_indices, sampler_indices, sampler_indices_padded,
             embeddings_indices, indices_len)
+
 
 
 def _pad_to_max(x:List[int],max_len:int,pad:int)->List[int]:
@@ -354,40 +430,44 @@ class LoRAModelManager:
                 into multiple layers in the adapted model.
         """
         self.lora_config = lora_config
-        self.max_olora = lora_config.max_oloras
+        self.max_olora = lora_config.max_oloras # max_olora means？
         self.max_num_seqs = max_num_seqs
         assert self.capacity >= self.lora_slots
         self.max_num_batched_tokens = math.ceil(max_num_batched_tokens / 8) * 8
         self.lora_index_to_id: List[Optional[int]] = [None] * self.lora_slots
         self.vocab_size = vocab_size
-        if self.lora_config.enable_olora:
-            self.base_indices = torch.empty((self.max_num_batched_tokens,self.max_olora),
-                                            dtype=torch.long,
-                                            device="cuda")
-            self.sampler_indices = torch.empty((self.max_num_batched_tokens,self.max_olora),
-                                            dtype=torch.long,
-                                            device="cuda")
-            self.sampler_indices_padded = torch.empty((self.max_num_batched_tokens,self.max_olora),
-                                                    dtype=torch.long,
-                                                    device="cuda")
-            self.embeddings_indices = torch.empty((2,
-                                                self.max_num_batched_tokens,self.max_olora),
-                                                dtype=torch.long,
-                                                device="cuda")
-        else:
-            self.base_indices = torch.empty(self.max_num_batched_tokens,
+
+        # TODO: (caesar) add olora_id for each olora group to avoid massive memory usage. 
+        # 
+        
+        # if self.lora_config.enable_olora:
+        #     self.base_indices = torch.empty((self.max_num_batched_tokens,self.max_olora),
+        #                                     dtype=torch.long,
+        #                                     device="cuda")
+        #     self.sampler_indices = torch.empty((self.max_num_batched_tokens,self.max_olora),
+        #                                     dtype=torch.long,
+        #                                     device="cuda")
+        #     self.sampler_indices_padded = torch.empty((self.max_num_batched_tokens,self.max_olora),
+        #                                             dtype=torch.long,
+        #                                             device="cuda")
+        #     self.embeddings_indices = torch.empty((2,
+        #                                         self.max_num_batched_tokens,self.max_olora),
+        #                                         dtype=torch.long,
+        #                                         device="cuda")
+        # else:
+        self.base_indices = torch.empty(self.max_num_batched_tokens,
+                                    dtype=torch.long,
+                                    device="cuda")
+        self.sampler_indices = torch.empty(self.max_num_batched_tokens,
                                         dtype=torch.long,
                                         device="cuda")
-            self.sampler_indices = torch.empty(self.max_num_batched_tokens,
-                                            dtype=torch.long,
-                                            device="cuda")
-            self.sampler_indices_padded = torch.empty(self.max_num_batched_tokens,
-                                                    dtype=torch.long,
-                                                    device="cuda")
-            self.embeddings_indices = torch.empty(2,
-                                                self.max_num_batched_tokens,
+        self.sampler_indices_padded = torch.empty(self.max_num_batched_tokens,
                                                 dtype=torch.long,
                                                 device="cuda")
+        self.embeddings_indices = torch.empty(2,
+                                            self.max_num_batched_tokens,
+                                            dtype=torch.long,
+                                            device="cuda")
         self.offsets = []
         # 4 is the number of indicies tensors defined above
         # base_indices, sampler_indices, sampler_indices_padded,
@@ -499,20 +579,37 @@ class LoRAModelManager:
         # Maintain the reference
         self.indices_len[:] = indices_len
     
-    def _set_olora_mapping(self,mapping:OLoRAMapping)-> None:
+    # def _set_olora_mapping(self,mapping:OLoRAMapping)-> None:
+
+    #     (base_indices, sampler_indices, sampler_indices_padded,
+    #      embeddings_indices,
+    #      indices_len) = convert_olora_mapping(mapping, self.lora_index_to_id,
+    #                                     self.lora_slots + 1, self.vocab_size,
+    #                                     self.lora_config.lora_extra_vocab_size,self.max_olora)
+    #     self.base_indices[:base_indices.shape[0],:].copy_(base_indices)
+    #     self.sampler_indices[:sampler_indices.shape[0],:].copy_(sampler_indices)
+    #     self.sampler_indices_padded[:sampler_indices_padded.shape[0],:].copy_(
+    #         sampler_indices_padded)
+    #     self.embeddings_indices[:embeddings_indices.
+    #                             shape[0], :embeddings_indices.shape[1],:].copy_(
+    #                                 embeddings_indices)
+    #     self.indices_len[:] = indices_len
+
+    def _set_olora_mapping(self,mapping: OLoRAMapping)-> None:
 
         (base_indices, sampler_indices, sampler_indices_padded,
          embeddings_indices,
-         indices_len) = convert_olora_mapping(mapping, self.lora_index_to_id,
+        indices_len) = convert_olora_mapping(mapping, self.lora_index_to_id,
                                         self.lora_slots + 1, self.vocab_size,
-                                        self.lora_config.lora_extra_vocab_size,self.max_olora)
-        self.base_indices[:base_indices.shape[0],:].copy_(base_indices)
-        self.sampler_indices[:sampler_indices.shape[0],:].copy_(sampler_indices)
-        self.sampler_indices_padded[:sampler_indices_padded.shape[0],:].copy_(
+                                        self.lora_config.lora_extra_vocab_size)
+        self.base_indices[:base_indices.shape[0]].copy_(base_indices)
+        self.sampler_indices[:sampler_indices.shape[0]].copy_(sampler_indices)
+        self.sampler_indices_padded[:sampler_indices_padded.shape[0]].copy_(
             sampler_indices_padded)
         self.embeddings_indices[:embeddings_indices.
-                                shape[0], :embeddings_indices.shape[1],:].copy_(
+                                shape[0], :embeddings_indices.shape[1]].copy_(
                                     embeddings_indices)
+        # Maintain the reference
         self.indices_len[:] = indices_len
 
     def set_lora_mapping(self, lora_mapping: LoRAMapping) -> None:

@@ -996,8 +996,9 @@ class ModelRunner:
                 # caesar and hqf
                 if self.lora_config and bool(self.lora_config.enable_olora):
                     lora_mapping = OLoRAMapping(
-                        [[]] * batch_size,
-                        [[]] * batch_size,
+                        [0] * batch_size,
+                        [0] * batch_size,
+                        None,
                     )
                     self.set_active_oloras(set(), lora_mapping)
                 elif self.lora_config and bool (not self.lora_config.enable_olora):

@@ -291,6 +291,8 @@ def main(args: argparse.Namespace):
         result_json["best_of"] = args.best_of
         result_json["use_beam_search"] = args.use_beam_search
         result_json["num_prompts"] = args.num_prompts
+        result_json["lora"] = True
+        result_json["olora"] = False
 
         # Traffic
         result_json["request_rate"] = (
