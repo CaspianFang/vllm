@@ -720,6 +720,7 @@ class ModelRunner:
                     (input_tokens, input_positions, input_metadata, prompt_lens,
                     subquery_lens, lora_index_mapping, lora_prompt_mapping,
                     olora_requests) = self._prepare_olora_prompt(seq_group_metadata_list)
+                    print(f"0, olora mapping from schedule: {lora_prompt_mapping}")     # FIXME: it will pass null list when warm up, like:  [[]], thus will trigger fault
                 else:
                     (input_tokens, input_positions, input_metadata, prompt_lens,
                     subquery_lens, lora_index_mapping, lora_prompt_mapping,
