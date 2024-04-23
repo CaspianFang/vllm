@@ -152,6 +152,7 @@ def _apply_olora_packed_nslice(
     org_output = output
     x = x.view(-1, x.shape[-1])
     output = output.view(-1, output.shape[-1])
+    print(f"original indices.shape: {indices.shape}")
     indices = indices.view(-1,indices.shape[-1])
     offset_left = 0
     for slice_idx in range(len(output_slices)):
@@ -173,8 +174,8 @@ def add_olora_slice(
 ):
     for batch_index in range(x.shape[0]):
         for indicies_index in range(indicies.shape[-1]):
-            print(f"x.shape: {x.shape}")
-            print(f"indicies.shape: {indicies.shape}")
+            # print(f"x.shape: {x.shape}")
+            # print(f"indicies.shape: {indicies.shape}")
             if indicies[batch_index][indicies_index] > -1:
                 y[batch_index,y_offset:y_offset+y_slice_size] += x[batch_index] @ wa_t_all[indicies[batch_index][indicies_index]].squeeze(0).transpose(-1, -2) @ wb_t_all[indicies[batch_index][indicies_index]].squeeze(0).transpose(-1, -2) 
     return y
